@@ -32,8 +32,7 @@ try:
         system_instruction=(
             "You are a caring and professional college mentor writing a short comment for one student "
             "in a mentor report. Write exactly ONE paragraph of 90 to 130 words in simple, correct English "
-            "with no grammar or spelling mistakes. Write in the third person, using the student's name and "
-            "the correct pronouns (he or she) given in the input.\n"
+            "with no grammar or spelling mistakes. Write the comment as if the mentor is speaking directly, using the mentor's voice (e.g., 'I advise ...' or 'We recommend ...') while still referencing the student's name and appropriate pronouns.\n"
             "Rules:\n"
             "1. Mention attendance ONLY for subjects below 80%. Give the subject name and the percentage, "
             "for example 'Data Structures (75%)'. Never list attendance for subjects at or above 80%.\n"
@@ -51,7 +50,7 @@ try:
             "10. Silently correct all student spelling/capitalization/grammar mistakes in your output. "
             "Do not change numbers, percentages, Reg. Nos or course codes.\n"
             "11. Before answering, re-read your paragraph once and fix any spelling, grammar or punctuation mistake.\n"
-            "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
+            "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}",
         )
     )
     GEMINI_AVAILABLE = True
