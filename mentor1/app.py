@@ -5,6 +5,7 @@ import os
 import json
 import re
 import io
+import time
 import urllib.request
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1172,6 +1173,11 @@ def _is_rate_limit_error(error):
     return '429' in message or 'quota' in message or 'rate limit' in message
 
 
+def _rate_limit_retry_delay(error):
+    match = re.search(r'please retry in\s+([0-9]+(?:\.[0-9]+)?)\s*seconds?', str(error), re.IGNORECASE)
+    return float(match.group(1)) if match else None
+
+
 def _generate_for_one(student, show_grades=False):
     """Generate comment for a single student. Returns result dict."""
     payload, corrections = _build_ai_payload(student, show_grades=show_grades)
@@ -1187,11 +1193,21 @@ def _generate_for_one(student, show_grades=False):
         except Exception as first_err:
             print(f"[AI Report] First attempt failed for {student.reg_num}: {first_err}")
             if _is_rate_limit_error(first_err):
-                comment = None
-                ai_warning = (
-                    "Gemini's request limit was reached; a template comment was used. "
-                    "Wait for the quota window to reset, then try again."
-                )
+                retry_delay = _rate_limit_retry_delay(first_err)
+                if retry_delay is not None and retry_delay <= 5:
+                    time.sleep(retry_delay + 0.25)
+                    try:
+                        comment = _call_model(payload)
+                        _validate_ai_comment(comment, payload)
+                        ai_generated = bool(comment)
+                    except Exception as retry_err:
+                        print(f"[AI Report] Retry failed for {student.reg_num}: {retry_err}")
+                        comment = None
+                if not comment:
+                    ai_warning = (
+                        "Gemini's request limit was reached; a template comment was used. "
+                        "Wait for the quota window to reset, then try again."
+                    )
             else:
                 # Retry once for errors other than provider quota limits.
                 try:
