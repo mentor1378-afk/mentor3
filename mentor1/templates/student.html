@@ -202,9 +202,13 @@
                                 class="premium-input text-xs">{{ student.event_participation or '' }}</textarea>
                         </div>
                         <div>
-                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Result</label>
-                            <textarea name="description" rows="3"
-                                class="premium-input text-xs">{{ student.additional_description or '' }}</textarea>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Student Remark /
+                                Reason</label>
+                            <p class="text-[10px] text-gray-600 mb-2">You can write a personal note here — e.g. reason
+                                for low attendance, any special circumstance, etc. This is shared with your mentor. For
+                                subject grades, use the <strong class="text-blue-400">My Results</strong> tab.</p>
+                            <textarea name="description" rows="3" class="premium-input text-xs"
+                                placeholder="e.g. I had low attendance in Physics due to a medical issue...">{{ student.additional_description or '' }}</textarea>
                         </div>
 
                         <div class="mt-10 flex justify-end">
