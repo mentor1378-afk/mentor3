@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # reads .env file automatically
+
 import os
 import json
 import re
@@ -1164,6 +1167,11 @@ def _validate_ai_comment(comment, payload):
             raise ValueError(f"Comment missing percentage for: {name}")
 
 
+def _is_rate_limit_error(error):
+    message = str(error).lower()
+    return '429' in message or 'quota' in message or 'rate limit' in message
+
+
 def _generate_for_one(student, show_grades=False):
     """Generate comment for a single student. Returns result dict."""
     payload, corrections = _build_ai_payload(student, show_grades=show_grades)
@@ -1178,15 +1186,28 @@ def _generate_for_one(student, show_grades=False):
             ai_generated = bool(comment)
         except Exception as first_err:
             print(f"[AI Report] First attempt failed for {student.reg_num}: {first_err}")
-            # Retry once
-            try:
-                comment = _call_model(payload)
-                _validate_ai_comment(comment, payload)
-                ai_generated = bool(comment)
-            except Exception as retry_err:
-                print(f"[AI Report] Retry failed for {student.reg_num}: {retry_err}")
+            if _is_rate_limit_error(first_err):
                 comment = None
-                ai_warning = "AI generation failed; a template comment was used. Check the server logs and API configuration."
+                ai_warning = (
+                    "Gemini's request limit was reached; a template comment was used. "
+                    "Wait for the quota window to reset, then try again."
+                )
+            else:
+                # Retry once for errors other than provider quota limits.
+                try:
+                    comment = _call_model(payload)
+                    _validate_ai_comment(comment, payload)
+                    ai_generated = bool(comment)
+                except Exception as retry_err:
+                    print(f"[AI Report] Retry failed for {student.reg_num}: {retry_err}")
+                    comment = None
+                    if _is_rate_limit_error(retry_err):
+                        ai_warning = (
+                            "Gemini's request limit was reached; a template comment was used. "
+                            "Wait for the quota window to reset, then try again."
+                        )
+                    else:
+                        ai_warning = "AI generation failed; a template comment was used. Check the server logs and API configuration."
     else:
         ai_warning = f"{PROVIDER} is unavailable. Check the configured API key and server dependencies."
 
@@ -1238,9 +1259,11 @@ def generate_comment_report():
         show_grades = False
 
     results = []
-    # Generate in parallel batches of 5
+    # Keep Gemini calls sequential; OpenAI can use a small parallel batch.
     BATCH = 5
-    with ThreadPoolExecutor(max_workers=BATCH) as executor:
+    # Serialize Gemini requests to avoid exceeding low free-tier per-minute quotas.
+    max_workers = 1 if PROVIDER == "gemini" else BATCH
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_generate_for_one, s, show_grades): s for s in students}
         for future in as_completed(futures):
             try:
