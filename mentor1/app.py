@@ -235,6 +235,9 @@ with app.app_context():
         if 'results_data' not in columns:
             db.session.execute(db.text('ALTER TABLE student_detail ADD COLUMN results_data TEXT DEFAULT \'[]\''))
             db.session.commit()
+        if 'custom_advisory' not in columns:
+            db.session.execute(db.text('ALTER TABLE student_detail ADD COLUMN custom_advisory TEXT'))
+            db.session.commit()
     except Exception as e:
         db.session.rollback()
         print(f"Migration error: {e}")
