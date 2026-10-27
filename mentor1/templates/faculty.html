@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Faculty Dashboard | SIMATS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="bg-[#0a0c10]">
+    <!-- Hamburger Menu Button -->
+    <button class="mobile-menu-btn" id="mobile-menu-btn" onclick="toggleMobileSidebar()">☰</button>
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleMobileSidebar()"></div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar icon-sidebar flex flex-col items-center" id="sidebar">
+            <div class="p-4 bg-white/5 rounded-xl border border-white/10 mb-8">
+                <img src="/static/images/logo.png" class="w-8 h-8 object-contain" alt="Logo">
+            </div>
+
+            <nav class="space-y-6">
+                <a href="#home" onclick="showSection('home')"
+                    class="p-3 bg-white/5 rounded-xl border border-white/10 text-purple-400 block active-icon"><i
+                        data-lucide="home" class="w-5 h-5"></i></a>
+                <a href="#advisory" onclick="showSection('advisory')"
+                    class="p-3 text-gray-600 block hover:text-white transition"><i data-lucide="megaphone"
+                        class="w-5 h-5"></i></a>
+                <a href="#observations" onclick="showSection('observations')"
+                    class="p-3 text-gray-600 block hover:text-white transition"><i data-lucide="message-square"
+                        class="w-5 h-5"></i></a>
+                <a href="#security" onclick="showSection('security')"
+                    class="p-3 text-gray-600 block hover:text-white transition"><i data-lucide="key"
+                        class="w-5 h-5"></i></a>
+            </nav>
+
+            <div class="mt-auto flex flex-col items-center space-y-6 pb-6">
+                <div class="text-[8px] text-white font-bold tracking-[0.2em] uppercase text-center space-y-1 opacity-60 vertical-text"
+                    style="writing-mode: vertical-rl; transform: rotate(180deg);">
+                    <span>Created by Sayyad Ibrahim | Powered by I-7 Tech studio</span>
+                </div>
+                <a href="/logout" class="p-3 text-gray-600 block hover:text-white transition"><i data-lucide="log-out"
+                        class="w-5 h-5"></i></a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content icon-main">
+            <div id="home-section">
+                <header class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
+                    <div class="text-center md:text-left">
+                        <h1 class="text-2xl font-black font-outfit text-white">Welcome, Mr. V. Ashwin</h1>
+                        <p class="text-gray-500 text-sm mt-1 uppercase tracking-widest text-[10px] font-bold">Mentor
+                            Dashboard</p>
+                    </div>
+                    <div class="flex flex-wrap items-center justify-center gap-3">
+                        <button onclick="document.getElementById('add-student-modal').classList.remove('hidden')"
+                            class="btn-primary !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl !bg-emerald-600 hover:!bg-emerald-500">
+                            <i data-lucide="user-plus" class="w-4 h-4"></i>
+                            <span>Add Student</span>
+                        </button>
+                        <!-- PPT Grade Toggle -->
+                        <form action="/toggle_grade_ppt" method="POST" style="display:inline;">
+                            <button type="submit"
+                                class="{% if show_grades_in_ppt %}btn-primary !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl !bg-purple-600 hover:!bg-purple-500{% else %}glass border border-white/10 !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl hover:bg-white/5 transition{% endif %}">
+                                <i data-lucide="{% if show_grades_in_ppt %}trophy{% else %}file-text{% endif %}"
+                                    class="w-4 h-4"></i>
+                                <span class="hidden md:inline">PPT: {% if show_grades_in_ppt %}<span
+                                        class="text-yellow-300 font-black">Grades ON</span>{% else %}Grades OFF{% endif
+                                    %}</span>
+                            </button>
+                        </form>
+                        <a href="/generate_report"
+                            class="btn-primary !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl">
+                            <i data-lucide="file-output" class="w-4 h-4"></i>
+                            <span>Generate PPT</span>
+                        </a>
+                        <button type="button" onclick="showSection('ai-report')"
+                            class="btn-primary !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl !bg-violet-600 hover:!bg-violet-500">
+                            <i data-lucide="bot" class="w-4 h-4"></i>
+                            <span class="hidden md:inline">AI Comment Report</span>
+                        </button>
+                        <button type="button"
+                            onclick="document.getElementById('clear-data-modal').classList.remove('hidden')"
+                            class="glass border border-red-500/20 !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl hover:bg-red-500/10 transition text-red-400">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            <span class="hidden md:inline">Clear Data</span>
+                        </button>
+                        <a href="/logout"
+                            class="glass border border-white/10 !py-2 !px-6 flex items-center space-x-2 text-sm rounded-xl hover:bg-white/5 transition">
+                            <i data-lucide="log-out" class="w-4 h-4"></i>
+                            <span class="hidden md:inline">Logout</span>
+                        </a>
+                    </div>
+                </header>
+
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                {% for category, message in messages %}
+                {% if category == 'success' %}
+                <div id="flash-msg"
+                    class="p-4 mb-6 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-sm transition-opacity duration-500">
+                    {{ message }}
+                </div>
+                <script>
+                    setTimeout(function () {
+                        var el = document.getElementById('flash-msg');
+                        if (el) { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 500); }
+                    }, 3000);
+                </script>
+                {% endif %}
+                {% endfor %}
+                {% endif %}
+                {% endwith %}
+
+                <!-- Edit Student Modal -->
+                <div id="edit-faculty-student-modal"
+                    class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+                    <div class="glass p-6 md:p-8 w-full max-w-md border border-white/10 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-xl font-bold text-white">Edit Mentee Details</h2>
+                            <button
+                                onclick="document.getElementById('edit-faculty-student-modal').classList.add('hidden')"
+                                class="text-gray-500 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                        <form id="edit-faculty-student-form" method="POST" class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Full
+                                    Name</label>
+                                <input type="text" name="name" id="edit-modal-name" class="premium-input bg-[#0d1117]">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Course</label>
+                                <input type="text" name="course" id="edit-modal-course"
+                                    class="premium-input bg-[#0d1117]">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Registered New
+                                    Course</label>
+                                <input type="text" name="registered_new_course" id="edit-modal-new-course"
+                                    class="premium-input bg-[#0d1117]">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Online
+                                    Course</label>
+                                <input type="text" name="online_course" id="edit-modal-online-course"
+                                    class="premium-input bg-[#0d1117]">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Event
+                                    Participation</label>
+                                <textarea name="event_participation" id="edit-modal-events"
+                                    class="premium-input bg-[#0d1117]" rows="2"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Mentor
+                                    Observations</label>
+                                <textarea name="description" id="edit-modal-description"
+                                    class="premium-input bg-[#0d1117]" rows="3"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-emerald-400 uppercase mb-2">Individual
+                                    Institutional Advisory (PPT Slide 2 Notice Override)</label>
+                                <textarea name="custom_advisory" id="edit-modal-custom-advisory"
+                                    class="premium-input bg-[#0d1117] border border-emerald-500/30" rows="3"
+                                    placeholder="Leave empty to use Global Institutional Advisory"></textarea>
+                            </div>
+                            <div class="border-t border-white/10 pt-4">
+                                <div class="flex justify-between items-center mb-3">
+                                    <label class="block text-[10px] font-bold text-purple-400 uppercase">Subject
+                                        Results</label>
+                                    <button type="button" onclick="addFacultyResultRow()"
+                                        class="text-[10px] text-blue-400 font-bold hover:underline">+ Add
+                                        Subject</button>
+                                </div>
+                                <div class="grid grid-cols-12 gap-2 mb-2 px-1">
+                                    <div class="col-span-7"><span
+                                            class="text-[9px] font-bold text-gray-600 uppercase">Subject</span></div>
+                                    <div class="col-span-3"><span
+                                            class="text-[9px] font-bold text-gray-600 uppercase">Grade</span></div>
+                                    <div class="col-span-2"></div>
+                                </div>
+                                <div id="faculty-results-container" class="space-y-2"></div>
+                            </div>
+                            <div class="flex space-x-3 pt-4">
+                                <button type="button"
+                                    onclick="document.getElementById('edit-faculty-student-modal').classList.add('hidden')"
+                                    class="flex-1 bg-white/5 text-white py-3 rounded-xl hover:bg-white/10 transition">Cancel</button>
+                                <button type="submit" class="flex-1 btn-primary">Save Changes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Add Student Modal -->
+                <div id="add-student-modal"
+                    class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+                    <div class="glass p-6 md:p-8 w-full max-w-md border border-white/10 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-xl font-bold text-white">Add New Mentee</h2>
+                            <button onclick="document.getElementById('add-student-modal').classList.add('hidden')"
+                                class="text-gray-500 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                        <form action="/add_student" method="POST" class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Registration
+                                    Number</label>
+                                <input type="text" name="reg_num" required class="premium-input bg-[#0d1117]">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Full
+                                    Name</label>
+                                <input type="text" name="name" required class="premium-input bg-[#0d1117]">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Password</label>
+                                <input type="password" name="password" required class="premium-input bg-[#0d1117]"
+                                    value="student123">
+                            </div>
+                            <div class="flex space-x-3 pt-4">
+                                <button type="button"
+                                    onclick="document.getElementById('add-student-modal').classList.add('hidden')"
+                                    class="flex-1 bg-white/5 text-white py-3 rounded-xl hover:bg-white/10 transition">Cancel</button>
+                                <button type="submit" class="flex-1 btn-primary">Create</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-10">
+                    <div class="glass p-6 flex items-center space-x-4">
+                        <div class="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400">
+                            <i data-lucide="users" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-gray-500 font-bold uppercase">Total Students</p>
+                            <h3 class="text-2xl font-black font-outfit text-white">{{ stats.total_students }}</h3>
+                        </div>
+                    </div>
+                    <div class="glass p-6 flex items-center space-x-4">
+                        <div
+                            class="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-400">
+                            <i data-lucide="clipboard-list" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-gray-500 font-bold uppercase">Reports Generated</p>
+                            <h3 class="text-2xl font-black font-outfit text-white font-outfit">{{
+                                stats.reports_generated }}</h3>
+                        </div>
+                    </div>
+                    <div class="glass p-6 flex items-center space-x-4">
+                        <div
+                            class="w-12 h-12 bg-orange-500/10 rounded-xl flex items-center justify-center text-orange-400">
+                            <i data-lucide="trending-up" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-gray-500 font-bold uppercase">Avg Attendance (A)</p>
+                            <h3 class="text-2xl font-black font-outfit text-white">{{ stats.avg_attendance_a }}%</h3>
+                        </div>
+                    </div>
+                    <div class="glass p-6 flex items-center space-x-4">
+                        <div
+                            class="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
+                            <i data-lucide="activity" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-gray-500 font-bold uppercase">Avg Attendance (B)</p>
+                            <h3 class="text-2xl font-black font-outfit text-white">{{ stats.avg_attendance_b }}%</h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-8">
+                    <div class="glass overflow-hidden">
+                        <div class="p-6 border-b border-white/5">
+                            <h2 class="text-lg font-black font-outfit text-white">Student Records Matrix</h2>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Reg No</th>
+                                        <th>Name</th>
+                                        <th>Slots & Attendance</th>
+                                        <th>Key Marks</th>
+                                        <th>Profile</th>
+
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for s in students %}
+                                    <tr onclick="showStudentDetails({{ s.reg_num | tojson | safe }})"
+                                        class="hover:bg-white/5 transition cursor-pointer">
+                                        <td class="text-xs font-mono">{{ s.reg_num }}</td>
+                                        <td class="text-xs font-bold text-white">{{ s.name }}</td>
+                                        <td>
+                                            <div class="space-y-1">
+                                                {% for slot, att in s.get_attendance().items() %}
+                                                <div class="flex items-center space-x-2">
+                                                    <span class="text-[8px] text-gray-500 uppercase w-12">{{ slot
+                                                        }}</span>
+                                                    <span class="text-[10px] font-bold text-blue-400">{{ att }}%</span>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="space-y-1">
+                                                {% for slot, m in s.get_marks().items() %}
+                                                <div class="text-[8px] text-gray-400">
+                                                    {{ slot }}: <span class="text-white">Model: {{ m.model }} | T1: {{
+                                                        m.test1 }}</span>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <!-- Circular profile photo based on user request -->
+                                            <div
+                                                class="w-10 h-10 rounded-full border border-white/10 overflow-hidden bg-black/40">
+                                                <img src="{{ s.photo_path or 'https://via.placeholder.com/40' }}"
+                                                    class="w-full h-full object-cover">
+                                            </div>
+                                            {% if s.last_updated %}
+                                            <p class="text-[8px] text-gray-400 mt-1 whitespace-nowrap">{{
+                                                s.last_updated.strftime('%d-%b-%Y') }}</p>
+                                            <p class="text-[8px] text-emerald-400 whitespace-nowrap">{{
+                                                s.last_updated.strftime('%I:%M %p') }}</p>
+                                            {% else %}
+                                            <p class="text-[8px] text-gray-500 mt-1 italic">No update</p>
+                                            {% endif %}
+                                        </td>
+                                        <td onclick="event.stopPropagation()">
+                                            <div class="flex flex-col gap-2">
+                                                <button type="button" onclick="openEditModal('{{ s.reg_num }}')"
+                                                    class="text-[10px] px-3 py-1 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/40 transition font-bold whitespace-nowrap text-center">
+                                                    ✏ Edit</button>
+                                                <form method="POST" action="/remove_student/{{ s.reg_num }}"
+                                                    onsubmit="return confirm('Remove student permanently?')">
+                                                    <button type="submit"
+                                                        class="w-full text-[10px] px-3 py-1 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/40 transition font-bold whitespace-nowrap">&#128465;
+                                                        Remove</button>
+                                                </form>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Student Detail Modal -->
+                <div id="student-detail-modal"
+                    class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+                    <div class="glass p-8 w-full max-w-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-8">
+                            <h2 class="text-xl font-bold text-white">Mentee Portfolio</h2>
+                            <div class="flex items-center gap-3">
+                                <form id="clear-student-form" method="POST" action="#">
+                                    <button type="submit"
+                                        onclick="return confirm('Clear all report data for this student?')"
+                                        class="text-xs px-4 py-1.5 rounded-lg bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/40 transition font-bold">
+                                        🗑 Clear Student Details
+                                    </button>
+                                </form>
+                                <button
+                                    onclick="document.getElementById('student-detail-modal').classList.add('hidden')"
+                                    class="text-gray-500 hover:text-white"><i data-lucide="x"
+                                        class="w-6 h-6"></i></button>
+                            </div>
+                        </div>
+                        <div id="student-modal-content" class="text-white">
+                            <!-- JS populated -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="security-section" class="hidden">
+                <header class="mb-10">
+                    <h1 class="text-2xl font-black font-outfit text-white">Faculty Security</h1>
+                    <p class="text-gray-500 text-sm mt-1 uppercase tracking-widest text-[10px] font-bold">Manage
+                        credentials</p>
+                </header>
+                <div class="glass p-8 max-w-md">
+                    <form action="/change_password" method="POST" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-500 mb-2">Current Password</label>
+                            <input type="password" name="current_password" required class="premium-input">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-500 mb-2">New Password</label>
+                            <input type="password" name="new_password" required class="premium-input">
+                        </div>
+                        <button type="submit" class="w-full btn-primary mt-4">Update Faculty Password</button>
+                    </form>
+                </div>
+            </div>
+            <div id="advisory-section" class="hidden">
+                <header class="mb-10">
+                    <h1 class="text-2xl font-black font-outfit text-white">Institutional Advisories</h1>
+                    <p class="text-gray-500 text-sm mt-1 uppercase tracking-widest text-[10px] font-bold">Manage Global
+                        Notices</p>
+                </header>
+                <div class="glass p-6 border border-emerald-500/20 bg-emerald-500/5 rounded-2xl">
+                    <div class="flex items-center space-x-3 mb-3">
+                        <div
+                            class="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
+                            <i data-lucide="megaphone" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-black font-outfit text-white">Global Institutional Advisory</h2>
+                            <p class="text-xs text-emerald-400 font-medium">This text will be included in Slide 2 of the
+                                PPT report for ALL students (unless customized individually).</p>
+                        </div>
+                    </div>
+                    <form action="/update_global_advisory" method="POST" class="space-y-4">
+                        <textarea name="global_advisory" rows="4" required
+                            class="premium-input bg-[#0d1117] border border-emerald-500/30 text-white font-medium text-lg leading-relaxed"
+                            placeholder="Enter institutional notice for all students...">{{ global_advisory }}</textarea>
+                        <div class="flex justify-end mt-4">
+                            <button type="submit"
+                                class="btn-primary !py-3 !px-8 text-md rounded-xl !bg-emerald-600 hover:!bg-emerald-500 flex items-center space-x-2">
+                                <i data-lucide="save" class="w-5 h-5"></i>
+                                <span>Save Global Advisory</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div id="observations-section" class="hidden">
+                <header class="mb-10">
+                    <h1 class="text-2xl font-black font-outfit text-white">Global Mentor Observations</h1>
+                    <p class="text-gray-500 text-sm mt-1 uppercase tracking-widest text-[10px] font-bold">Default
+                        observation text for all students</p>
+                </header>
+                <div class="glass p-6 border border-purple-500/20 bg-purple-500/5 rounded-2xl">
+                    <div class="flex items-center space-x-3 mb-3">
+                        <div
+                            class="w-10 h-10 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-400">
+                            <i data-lucide="message-square" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-black font-outfit text-white">Global Mentor Observation</h2>
+                            <p class="text-xs text-purple-400 font-medium">This text will appear in Slide 2 of the PPT
+                                for ALL students who don't have a custom individual observation set.</p>
+                        </div>
+                    </div>
+                    <form action="/update_global_observation" method="POST" class="space-y-4">
+                        <textarea name="global_observation" rows="4" required
+                            class="premium-input bg-[#0d1117] border border-purple-500/30 text-white font-medium text-lg leading-relaxed"
+                            placeholder="Enter default mentor observation for all students...">{{ global_observation }}</textarea>
+                        <div class="flex justify-end mt-4">
+                            <button type="submit"
+                                class="btn-primary !py-3 !px-8 text-md rounded-xl !bg-purple-600 hover:!bg-purple-500 flex items-center space-x-2">
+                                <i data-lucide="save" class="w-5 h-5"></i>
+                                <span>Save Global Observation</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- ===================================================== -->
+            <!-- AI MENTOR COMMENT REPORT SECTION                       -->
+            <!-- ===================================================== -->
+            <div id="ai-report-section" class="hidden">
+                <header class="mb-8">
+                    <div class="flex items-center gap-4 mb-2">
+                        <div
+                            class="w-12 h-12 bg-violet-500/10 rounded-xl flex items-center justify-center text-violet-400">
+                            <i data-lucide="bot" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-2xl font-black font-outfit text-white">AI Mentor Comment Report</h1>
+                            <p class="text-gray-500 text-[10px] mt-0.5 uppercase tracking-widest font-bold">
+                                AI-generated, grammar-perfect mentor paragraphs → Word (.docx)</p>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- Config bar -->
+                <div
+                    class="glass p-5 rounded-2xl border border-violet-500/20 bg-violet-500/5 mb-6 flex flex-col md:flex-row items-start md:items-center gap-4">
+                    <div class="flex-1">
+                        <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Mentor Name (for
+                            document header)</label>
+                        <input type="text" id="ai-mentor-name" value="Mr. V. Ashwin"
+                            class="premium-input bg-[#0d1117] max-w-xs text-sm" placeholder="Enter mentor name">
+                    </div>
+                    <button id="ai-generate-btn" onclick="generateCommentReport()"
+                        class="btn-primary !py-3 !px-8 flex items-center gap-2 rounded-xl !bg-violet-600 hover:!bg-violet-500 whitespace-nowrap">
+                        <i data-lucide="sparkles" class="w-4 h-4"></i>
+                        <span>Generate AI Comment Report</span>
+                    </button>
+                </div>
+
+                <!-- Loading overlay -->
+                <div id="ai-loading" class="hidden">
+                    <div class="glass rounded-2xl border border-violet-500/20 p-12 text-center">
+                        <div
+                            class="inline-block w-12 h-12 rounded-full border-4 border-violet-500/30 border-t-violet-400 animate-spin mb-4">
+                        </div>
+                        <p class="text-white font-bold text-lg" id="ai-loading-text">Generating comments with AI...</p>
+                        <p class="text-gray-500 text-sm mt-1">This may take up to 60 seconds for a large class</p>
+                    </div>
+                </div>
+
+                <!-- Error message -->
+                <div id="ai-error"
+                    class="hidden p-4 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-sm mb-4">
+                </div>
+
+                <!-- Preview area -->
+                <div id="ai-preview-area" class="hidden">
+                    <!-- Summary bar -->
+                    <div
+                        class="glass rounded-2xl border border-white/10 p-4 mb-5 flex flex-col md:flex-row items-center justify-between gap-3">
+                        <div id="ai-summary-text" class="text-sm text-gray-300"></div>
+                        <button onclick="downloadDocx()"
+                            class="btn-primary !py-2 !px-6 flex items-center gap-2 rounded-xl !bg-emerald-600 hover:!bg-emerald-500 whitespace-nowrap">
+                            <i data-lucide="file-down" class="w-4 h-4"></i>
+                            <span>Download as Word (.docx)</span>
+                        </button>
+                    </div>
+
+                    <!-- Student cards -->
+                    <div id="ai-cards-container" class="space-y-4"></div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Clear Data Confirmation Modal -->
+    <div id="clear-data-modal"
+        class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="glass p-8 w-full max-w-sm border border-red-500/30 rounded-2xl text-center">
+            <div class="text-4xl mb-4">⚠️</div>
+            <h2 class="text-xl font-black text-white mb-2">Clear All Data?</h2>
+            <p class="text-gray-400 text-sm mb-6">This will permanently delete <strong class="text-red-400">ALL mentee
+                    records</strong> and academic data. This cannot be undone.</p>
+            <div class="flex gap-4">
+                <button onclick="document.getElementById('clear-data-modal').classList.add('hidden')"
+                    class="flex-1 py-2 rounded-xl border border-white/10 text-gray-400 hover:bg-white/5 transition text-sm font-bold">
+                    Cancel
+                </button>
+                <form action="/delete_all_reports" method="POST" class="flex-1">
+                    <button type="submit"
+                        class="w-full py-2 rounded-xl bg-red-600 hover:bg-red-500 transition text-white text-sm font-black">
+                        Yes, Delete All
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        const studentsData = {{ students_json | tojson | safe }};
+
+        function showSection(id) {
+            ['home', 'advisory', 'observations', 'security', 'ai-report'].forEach(s => {
+                document.getElementById(s + '-section').classList.add('hidden');
+            });
+            document.getElementById(id + '-section').classList.remove('hidden');
+
+            document.querySelectorAll('nav a').forEach(a => a.classList.remove('active-icon'));
+            const activeLink = document.querySelector(`[onclick="showSection('${id}')"]`);
+            if (activeLink) activeLink.classList.add('active-icon');
+        }
+
+        // =========================================================
+        // AI COMMENT REPORT LOGIC
+        // =========================================================
+
+        // Holds the currently generated results
+        let _aiResults = [];
+
+        function setAiUiState(state, msg) {
+            // state: 'idle' | 'loading' | 'preview' | 'error'
+            document.getElementById('ai-loading').classList.add('hidden');
+            document.getElementById('ai-error').classList.add('hidden');
+            document.getElementById('ai-preview-area').classList.add('hidden');
+            document.getElementById('ai-generate-btn').disabled = false;
+
+            if (state === 'loading') {
+                document.getElementById('ai-loading').classList.remove('hidden');
+                document.getElementById('ai-loading-text').textContent = msg || 'Generating comments with AI...';
+                document.getElementById('ai-generate-btn').disabled = true;
+            } else if (state === 'preview') {
+                document.getElementById('ai-preview-area').classList.remove('hidden');
+            } else if (state === 'error') {
+                const el = document.getElementById('ai-error');
+                el.textContent = msg || 'An error occurred.';
+                el.classList.remove('hidden');
+            }
+        }
+
+        function renderCards(results) {
+            _aiResults = results;
+            const container = document.getElementById('ai-cards-container');
+            container.innerHTML = '';
+
+            const lowCount = results.filter(r => r.low_count > 0).length;
+            const eventCount = results.filter(r => r.has_event).length;
+            document.getElementById('ai-summary-text').innerHTML =
+                `<span class="font-bold text-white">${results.length}</span> student comments generated &nbsp;·&nbsp; ` +
+                `<span class="text-red-400 font-bold">${lowCount}</span> with low attendance &nbsp;·&nbsp; ` +
+                `<span class="text-emerald-400 font-bold">${eventCount}</span> with event achievements`;
+
+            results.forEach((r, idx) => {
+                const corrections = r.corrections || [];
+                const corrHtml = corrections.length
+                    ? `<div class="mt-3">
+                        <button type="button" onclick="toggleCorr(${idx})" class="text-[10px] font-bold text-amber-400 hover:underline">
+                            ⚠ ${corrections.length} correction(s) made — click to review
+                        </button>
+                        <div id="corr-${idx}" class="hidden mt-2 space-y-1">
+                            ${corrections.map(c => `
+                                <div class="text-[10px] bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-1.5">
+                                    <span class="text-gray-500">${c.field}:</span>
+                                    <span class="line-through text-red-400 ml-1">${escHtml(c.original)}</span>
+                                    <span class="text-emerald-400 ml-1">→ ${escHtml(c.corrected)}</span>
+                                </div>`).join('')}
+                        </div>
+                    </div>`
+                    : '';
+
+                const lowBadge = r.low_count > 0
+                    ? `<span class="text-[9px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">Low Attendance</span>`
+                    : `<span class="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">Good Attendance</span>`;
+                const evBadge = r.has_event
+                    ? `<span class="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-bold">Event ✓</span>` : '';
+
+                const card = document.createElement('div');
+                card.id = `ai-card-${idx}`;
+                card.className = 'glass rounded-2xl border border-white/10 p-5';
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-4 mb-3">
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <h3 class="text-white font-bold">${escHtml(r.name)}</h3>
+                                <span class="text-[10px] font-mono text-gray-500">${escHtml(r.reg_no)}</span>
+                                ${lowBadge} ${evBadge}
+                            </div>
+                            ${corrHtml}
+                        </div>
+                        <button onclick="regenerateOne('${escHtml(r.reg_no)}', ${idx})"
+                            id="regen-btn-${idx}"
+                            class="glass border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition text-[10px] font-bold px-3 py-1.5 rounded-lg whitespace-nowrap flex items-center gap-1">
+                            <i data-lucide="refresh-cw" class="w-3 h-3"></i> Regenerate
+                        </button>
+                    </div>
+                    <textarea id="comment-ta-${idx}" rows="5"
+                        class="premium-input bg-[#0d1117] text-sm leading-relaxed w-full resize-y font-normal"
+                        style="min-height:100px">${escHtml(r.comment)}</textarea>
+                `;
+                container.appendChild(card);
+            });
+            lucide.createIcons();
+        }
+
+        function toggleCorr(idx) {
+            const el = document.getElementById(`corr-${idx}`);
+            if (el) el.classList.toggle('hidden');
+        }
+
+        function escHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        async function generateCommentReport() {
+            setAiUiState('loading', 'Generating AI comments for all students...');
+            try {
+                const res = await fetch('/generate_comment_report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || `Server error ${res.status}`);
+                }
+                const results = await res.json();
+                renderCards(results);
+                setAiUiState('preview');
+            } catch (e) {
+                setAiUiState('error', 'Failed to generate report: ' + e.message);
+            }
+        }
+
+        async function regenerateOne(regNo, idx) {
+            const btn = document.getElementById(`regen-btn-${idx}`);
+            const ta = document.getElementById(`comment-ta-${idx}`);
+            if (btn) { btn.disabled = true; btn.textContent = '...'; }
+            try {
+                const res = await fetch('/generate_comment_report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reg_nos: [regNo] })
+                });
+                if (!res.ok) throw new Error(`Server error ${res.status}`);
+                const results = await res.json();
+                if (results.length > 0 && ta) {
+                    ta.value = results[0].comment;
+                    // Update stored result
+                    const existing = _aiResults.findIndex(r => r.reg_no === regNo);
+                    if (existing >= 0) _aiResults[existing].comment = results[0].comment;
+                }
+            } catch (e) {
+                alert('Regeneration failed: ' + e.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3"></i> Regenerate';
+                    lucide.createIcons();
+                }
+            }
+        }
+
+        async function downloadDocx() {
+            // Collect all current textarea values
+            const mentorName = document.getElementById('ai-mentor-name').value.trim() || 'Mr. V. Ashwin';
+            const comments = _aiResults.map((r, idx) => ({
+                reg_no: r.reg_no,
+                name: r.name,
+                comment: (document.getElementById(`comment-ta-${idx}`) || {}).value || r.comment,
+                low_count: r.low_count,
+                has_event: r.has_event,
+            }));
+
+            if (!comments.length) { alert('No comments to download. Please generate report first.'); return; }
+
+            try {
+                const res = await fetch('/download_comment_report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mentor_name: mentorName, comments })
+                });
+                if (!res.ok) throw new Error(`Server error ${res.status}`);
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'Mentor_Comment_Report.docx';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+            } catch (e) {
+                alert('Download failed: ' + e.message);
+            }
+        }
+
+        function openEditModal(regNum) {
+            const s = studentsData.find(std => String(std.reg_num) === String(regNum));
+            if (!s) return;
+
+            document.getElementById('edit-modal-name').value = s.name || '';
+            document.getElementById('edit-modal-course').value = s.course || '';
+            document.getElementById('edit-modal-new-course').value = s.registered_new_course || '';
+            document.getElementById('edit-modal-online-course').value = s.online_course || '';
+            document.getElementById('edit-modal-events').value = s.event_participation || '';
+            document.getElementById('edit-modal-description').value = s.additional_description || '';
+            document.getElementById('edit-modal-custom-advisory').value = s.custom_advisory || '';
+
+            document.getElementById('edit-faculty-student-form').action = '/edit_student_faculty/' + encodeURIComponent(regNum);
+
+            // Populate results
+            const container = document.getElementById('faculty-results-container');
+            container.innerHTML = '';
+            try {
+                const results = JSON.parse(s.results_data || '[]');
+                results.forEach(r => {
+                    container.appendChild(buildFacultyResultRow(r.subject || '', r.grade || ''));
+                });
+            } catch (e) { }
+
+            document.getElementById('edit-faculty-student-modal').classList.remove('hidden');
+        }
+
+        function buildFacultyResultRow(subject, grade) {
+            const row = document.createElement('div');
+            row.className = 'faculty-result-row grid grid-cols-12 gap-2 items-center bg-white/5 p-2 rounded-xl border border-white/5';
+            row.innerHTML = `
+                <div class="col-span-7">
+                    <input type="text" name="result_subject[]" value="${subject}" placeholder="e.g. Mathematics"
+                        class="premium-input bg-[#0d1117] text-xs w-full">
+                </div>
+                <div class="col-span-3">
+                    <input type="text" name="result_grade[]" value="${grade}" placeholder="e.g. A+"
+                        class="premium-input bg-[#0d1117] text-xs w-full">
+                </div>
+                <div class="col-span-2 flex justify-end">
+                    <button type="button" onclick="removeFacultyResultRow(this)" class="text-red-500 hover:text-red-400">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i>
+                    </button>
+                </div>
+            `;
+            return row;
+        }
+
+        function addFacultyResultRow() {
+            const container = document.getElementById('faculty-results-container');
+            container.appendChild(buildFacultyResultRow('', ''));
+            lucide.createIcons();
+        }
+
+        function removeFacultyResultRow(btn) {
+            btn.closest('.faculty-result-row').remove();
+        }
+
+        function showStudentDetails(regNum) {
+            // Find student from JSON data
+            // Since students is a list of dicts, we can find it
+            const s = studentsData.find(std => String(std.reg_num) === String(regNum));
+            if (!s) return;
+
+            const content = document.getElementById('student-modal-content');
+            content.innerHTML = `
+                <div class="grid grid-cols-3 gap-8">
+                    <div class="col-span-1">
+                        <div class="w-full aspect-square rounded-2xl border-4 border-white/5 overflow-hidden bg-black/40 mb-4">
+                            <img src="${s.photo_path || 'https://via.placeholder.com/200'}" class="w-full h-full object-cover">
+                        </div>
+                        <h3 class="text-xl font-black font-outfit">${s.name}</h3>
+                        <p class="text-blue-400 text-xs font-bold uppercase tracking-widest">${s.reg_num}</p>
+                        <div class="mt-4 p-3 bg-white/5 rounded-xl border border-white/10">
+                            <p class="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Last Updated</p>
+                            <p class="text-xs font-semibold text-emerald-400 mt-1">${s.last_updated || 'N/A'}</p>
+                        </div>
+                    </div>
+                    <div class="col-span-2 space-y-6">
+                        <div class="bg-white/5 p-5 rounded-2xl border border-white/5">
+                            <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Academic Status</h4>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <p class="text-[10px] text-gray-400 uppercase">Course</p>
+                                    <p class="text-sm font-bold">${s.course || 'N/A'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] text-gray-400 uppercase">Attendance</p>
+                                    <p class="text-sm font-bold text-blue-400">${Object.values(JSON.parse(s.attendance_data || '{}')).join('% / ') || '0'}%</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-white/5 p-5 rounded-2xl border border-white/5">
+                            <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Recent Activities</h4>
+                            <p class="text-sm text-gray-300 italic">${s.event_participation || 'No activities recorded yet.'}</p>
+                        </div>
+                        <div class="bg-purple-500/5 p-5 rounded-2xl border border-purple-500/10">
+                            <h4 class="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-3">Mentor Observations</h4>
+                            <p class="text-sm text-white">${s.additional_description || 'No specific notes added.'}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('student-detail-modal').classList.remove('hidden');
+            // Set the clear form action for this specific student
+            document.getElementById('clear-student-form').action = '/clear_student/' + encodeURIComponent(regNum);
+            lucide.createIcons();
+        }
+    </script>
+
+    <script>
+        // Mobile sidebar toggle
+        function toggleMobileSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('mobile-open');
+            overlay.classList.toggle('active');
+        }
+
+        // Close sidebar when a nav link is clicked (mobile)
+        document.querySelectorAll('nav a').forEach(item => {
+            item.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    const sidebar = document.getElementById('sidebar');
+                    const overlay = document.getElementById('sidebar-overlay');
+                    if (sidebar.classList.contains('mobile-open')) {
+                        sidebar.classList.remove('mobile-open');
+                        overlay.classList.remove('active');
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>

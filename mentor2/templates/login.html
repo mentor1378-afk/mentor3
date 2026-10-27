@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | SIMATS Mentor Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body class="bg-black">
+    <div class="login-page relative">
+        <!-- Background Image/Video Placeholder -->
+        <div class="absolute inset-0 z-0 overflow-hidden">
+            <div
+                class="absolute top-[20%] left-[20%] w-[350px] html-glow h-[350px] bg-purple-600/15 blur-[120px] rounded-full pointer-events-none">
+            </div>
+            <div
+                class="absolute bottom-[20%] right-[20%] w-[400px] html-glow h-[400px] bg-cyan-500/15 blur-[120px] rounded-full pointer-events-none">
+            </div>
+            <img src="https://images.unsplash.com/photo-1541339907198-e08756ebafe3?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80"
+                class="w-full h-full object-cover opacity-20">
+        </div>
+
+        <div class="login-card relative z-10">
+            <div class="flex justify-center mb-6">
+                <div class="p-3 bg-white/5 rounded-2xl border border-white/10">
+                    <img src="/static/images/logo.png" class="w-12 h-12 object-contain" alt="Logo">
+                </div>
+            </div>
+
+            <h1 class="text-3xl font-black font-outfit text-white mb-2">SIMATS</h1>
+            <p class="text-xs uppercase tracking-[0.2em] text-gray-500 mb-8 font-bold">Engineering</p>
+
+            <h2 class="text-left text-sm font-semibold text-gray-400 mb-6 uppercase tracking-wider">Login</h2>
+
+            <form action="/login" method="POST" class="space-y-4">
+                <div class="text-left">
+                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2 ml-1">Username</label>
+                    <div class="relative">
+                        <input type="text" name="username" required class="premium-input pl-10" placeholder="FACULTY01">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">👤</span>
+                    </div>
+                </div>
+                <div class="text-left">
+                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2 ml-1">Password</label>
+                    <div class="relative">
+                        <input type="password" name="password" required class="premium-input pl-10"
+                            placeholder="••••••••">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">🔒</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between text-[10px] text-gray-500 py-2">
+                    <label class="flex items-center space-x-2">
+                        <input type="checkbox" class="rounded bg-black border-gray-700">
+                        <span>Remember me</span>
+                    </label>
+                    <a href="#" class="hover:text-blue-400">Forgot password?</a>
+                </div>
+
+                <button type="submit" class="w-full btn-primary py-3 rounded-lg text-sm font-bold tracking-wider mt-4">
+                    Login
+                </button>
+            </form>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            {% for category, message in messages %}
+            {% if category == 'danger' %}
+            <div id="login-error-msg"
+                class="mt-4 p-3 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-bold text-center transition-opacity duration-500">
+                ⚠️ {{ message }}
+            </div>
+            <script>
+                setTimeout(function () {
+                    var el = document.getElementById('login-error-msg');
+                    if (el) { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 500); }
+                }, 3000);
+            </script>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+
+            <div class="mt-8">
+                <p class="text-[10px] uppercase text-gray-500 font-bold mb-4 tracking-widest">Select Role</p>
+                <div class="flex gap-4">
+                    <div onclick="document.querySelector('[name=username]').value='FACULTY01'; document.querySelector('[name=password]').value='faculty123';"
+                        class="flex-1 p-3 border border-white/10 rounded-2xl bg-white/5 cursor-pointer hover:bg-purple-500/10 hover:border-purple-500/30 transition-all duration-300">
+                        <span class="text-sm font-bold text-white/90">👔 Faculty</span>
+                    </div>
+                    <div onclick="document.querySelector('[name=username]').value='211801001'; document.querySelector('[name=password]').value='student123';"
+                        class="flex-1 p-3 border border-white/10 rounded-2xl bg-white/5 cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300">
+                        <span class="text-sm font-bold text-white/90">🎓 Student</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-10 text-[10px] text-white font-bold tracking-[0.2em] uppercase space-y-1 opacity-80">
+                <p>© SIMATS Engineering</p>
+                <p>Created by Sayyad Ibrahim</p>
+                <p>Powered by I-7 Tech studio</p>
+                <p><a href="https://www.linkedin.com/in/ibrahim-sayyad-5619ba380?utm_source=share_via&utm_content=profile&utm_medium=member_android"
+                        target="_blank" class="text-blue-400 hover:underline">LinkedIn Profile</a></p>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

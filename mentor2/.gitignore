@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+env/
+.env
+.venv/
+
+# Flask / SQLite database (do not share DB file)
+instance/
+*.db
+*.sqlite3
+
+# Uploaded files (student photos)
+static/uploads/*
+!static/uploads/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reports generated
+reports/
+*.pptx
