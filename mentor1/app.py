@@ -57,7 +57,7 @@ def _get_model_choice():
     if choice == "GROQ":
         return (
             "groq",
-            os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
             groq_key or None,
         )
     if choice == "GEMINI":
