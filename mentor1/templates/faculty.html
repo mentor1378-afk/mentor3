@@ -679,6 +679,13 @@
                     <textarea id="comment-ta-${idx}" rows="5"
                         class="premium-input bg-[#0d1117] text-sm leading-relaxed w-full resize-y font-normal"
                         style="min-height:100px">${escHtml(r.comment)}</textarea>
+                    <div class="flex justify-end mt-2">
+                        <button type="button" onclick="copyStudentComment(${idx})"
+                            id="copy-comment-btn-${idx}"
+                            class="glass border border-white/10 text-gray-300 hover:text-white hover:border-violet-500/40 transition text-[10px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1">
+                            <i data-lucide="copy" class="w-3 h-3"></i> Copy comment
+                        </button>
+                    </div>
                 `;
                 container.appendChild(card);
             });
@@ -697,6 +704,37 @@
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;');
+        }
+
+        async function copyStudentComment(idx) {
+            const comment = document.getElementById(`comment-ta-${idx}`);
+            const button = document.getElementById(`copy-comment-btn-${idx}`);
+            if (!comment || !button) return;
+
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(comment.value);
+                } else {
+                    const copyField = document.createElement('textarea');
+                    copyField.value = comment.value;
+                    copyField.style.position = 'fixed';
+                    copyField.style.opacity = '0';
+                    document.body.appendChild(copyField);
+                    copyField.select();
+                    const copied = document.execCommand('copy');
+                    copyField.remove();
+                    if (!copied) throw new Error('Clipboard access is unavailable.');
+                }
+
+                button.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i> Copied';
+                lucide.createIcons();
+                window.setTimeout(() => {
+                    button.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i> Copy comment';
+                    lucide.createIcons();
+                }, 1800);
+            } catch (error) {
+                alert(`Could not copy the comment: ${error.message}`);
+            }
         }
 
         async function generateCommentReport() {

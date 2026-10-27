@@ -28,10 +28,13 @@ from pptx.oxml.xmlchemy import OxmlElement
 # --- Dynamic model selection -------------------------------------------------
 
 _GEMINI_SYSTEM_INSTRUCTION = (
-    "You are a caring and professional college mentor writing one short paragraph for a student report. "
-    "Use only the supplied facts, mention attendance only for subjects below 80%, and give the subject and "
-    "percentage. Encourage students warmly, do not invent facts, and do not use headings or bullet points. "
-    'Return only a JSON object with "reg_no" and "comment" fields.'
+    "You are a caring, professional college mentor writing an individualized student progress comment. "
+    "Use the supplied reference style: begin with the student's name, describe attendance with exact subject "
+    "names and percentages, acknowledge stronger subjects when relevant, address event participation and "
+    "online-course status, and close with sincere encouragement. Use only supplied facts; never invent "
+    "achievements, grades, risks, family circumstances, or actions. Do not copy private remarks verbatim. "
+    "Write one natural paragraph without headings or bullets and return only a JSON object with "
+    '"reg_no" and "comment" fields.'
 )
 
 def _get_model_choice():
@@ -1082,21 +1085,24 @@ def _call_model(payload):
     elif PROVIDER in {"openai", "groq"}:
         system_msg = (
             "You are a college mentor personally writing a short comment about one student for the semester mentor report. "
-            "Write exactly ONE paragraph of 90 to 130 words in warm, natural, conversational English — the kind a real mentor would actually type themselves. "
-            "It should NOT sound generated or formal. Use a genuine first-person mentor voice throughout (e.g. 'I am pleased to note...', 'I personally advised...', 'I encourage...'). "
-            "Vary your sentence structure naturally — avoid starting every sentence the same way. Do NOT repeat the student's full name more than twice.\n"
+            "Follow this reference style: start with the student's name; state attendance accurately with subject names "
+            "and percentages; recognize subjects with stronger attendance when relevant; describe any recorded event "
+            "participation accurately; mention online-course status when provided; and end with specific, warm "
+            "encouragement. Write one natural, personal paragraph of about 90 to 150 words.\n"
             "Rules:\n"
-            "1. Mention attendance ONLY for subjects below 80%. Give the subject name and percentage.\n"
-            "2. If no subject below 80%, mention attendance is consistent and encourage keeping it up.\n"
-            "3. If below 80% in only ONE subject, acknowledge other subjects are good.\n"
-            "4. If below 80% in several subjects, urge attending every upcoming class.\n"
-            "5. Congratulate warmly on event achievements. If no event, encourage joining a hackathon or symposium.\n"
-            "6. If grades are provided, weave them naturally — do not list them mechanically.\n"
-            "7. Always close with a genuine personal encouraging note.\n"
-            "8. Do not mention private reasons such as health or family in detail.\n"
-            "9. Use only the facts given. Do not invent marks, events, subjects or percentages.\n"
-            "10. Output only the paragraph — no bullet points, headings, or quotation marks.\n"
-            "11. Silently fix all spelling/grammar mistakes.\n"
+            "1. Mention low attendance only for subjects below 80%, with exact subject names and percentages. "
+            "If multiple subjects are low, identify each and recommend attending upcoming classes. Do not claim "
+            "detention risk, parent meetings, or other consequences unless explicitly provided.\n"
+            "2. If there are no low-attendance subjects, say attendance is consistent; if some subjects are good, "
+            "acknowledge them without implying that all are good.\n"
+            "3. If event details are supplied, describe only the recorded participation or achievement. If none are "
+            "supplied, say no event participation was recorded and encourage a suitable future opportunity.\n"
+            "4. Mention online-course participation only when the supplied facts support it; if blank, say no course "
+            "was recorded and encourage one where appropriate.\n"
+            "5. Weave provided grades naturally. Use only the supplied facts; do not invent subjects, percentages, "
+            "achievements, course enrollment, or personal circumstances. Do not repeat private remarks verbatim.\n"
+            "6. Use a sincere mentor voice, vary sentence structure, and close with encouragement. Output no headings, "
+            "bullets, or quotation marks. Silently correct spelling and grammar.\n"
             "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
         )
         resp = _chat_client.chat.completions.create(
