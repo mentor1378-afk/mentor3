@@ -11,7 +11,9 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: MODEL_SELECTION
-        value: GEMINI
+        value: GROQ
+      - key: GROQ_API_KEY
+        sync: false
       - key: GNANAVEL_INITIAL_PASSWORD
         sync: false
       - key: ADMIN_INITIAL_PASSWORD

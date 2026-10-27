@@ -41,13 +41,25 @@ def _get_model_choice():
         or (os.getenv("GOOGLE_API_KEY") or "").strip()
     )
     openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    groq_key = (os.getenv("GROQ_API_KEY") or "").strip()
     choice = (os.getenv("MODEL_SELECTION") or "").strip().upper()
 
     if not choice:
-        choice = "GEMINI" if gemini_key else "OPENAI" if openai_key else "GEMINI"
+        choice = (
+            "GROQ" if groq_key else
+            "GEMINI" if gemini_key else
+            "OPENAI" if openai_key else
+            "GEMINI"
+        )
 
     if choice == "OPENAI":
         return ("openai", os.getenv("OPENAI_MODEL", "gpt-4o-mini"), openai_key or None)
+    if choice == "GROQ":
+        return (
+            "groq",
+            os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            groq_key or None,
+        )
     if choice == "GEMINI":
         return (
             "gemini",
@@ -58,9 +70,9 @@ def _get_model_choice():
     return (choice.lower(), "", None)
 
 PROVIDER, MODEL_NAME, API_KEY = _get_model_choice()
-GEMINI_AVAILABLE = False
+AI_PROVIDER_AVAILABLE = False
 _gemini_model = None
-_openai_client = None
+_chat_client = None
 
 if PROVIDER == "gemini":
     if API_KEY:
@@ -71,25 +83,29 @@ if PROVIDER == "gemini":
                 model_name=MODEL_NAME,
                 system_instruction=_GEMINI_SYSTEM_INSTRUCTION,
             )
-            GEMINI_AVAILABLE = True
+            AI_PROVIDER_AVAILABLE = True
         except Exception as exc:
             print(f"[AI Report] Gemini not available: {exc}")
-            GEMINI_AVAILABLE = False
+            AI_PROVIDER_AVAILABLE = False
             _gemini_model = None
     else:
         print("[AI Report] Gemini not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI comment generation.")
-elif PROVIDER == "openai":
+elif PROVIDER in {"openai", "groq"}:
     if API_KEY:
         try:
             import openai
-            _openai_client = openai.OpenAI(api_key=API_KEY)
-            GEMINI_AVAILABLE = True
+            client_options = {"api_key": API_KEY}
+            if PROVIDER == "groq":
+                client_options["base_url"] = "https://api.groq.com/openai/v1"
+            _chat_client = openai.OpenAI(**client_options)
+            AI_PROVIDER_AVAILABLE = True
         except Exception as exc:
-            print(f"[AI Report] OpenAI not available: {exc}")
-            GEMINI_AVAILABLE = False
-            _openai_client = None
+            print(f"[AI Report] {PROVIDER.title()} not available: {exc}")
+            AI_PROVIDER_AVAILABLE = False
+            _chat_client = None
     else:
-        print("[AI Report] OpenAI not configured. Set OPENAI_API_KEY to enable AI comment generation.")
+        api_key_name = "GROQ_API_KEY" if PROVIDER == "groq" else "OPENAI_API_KEY"
+        print(f"[AI Report] {PROVIDER.title()} not configured. Set {api_key_name} to enable AI comment generation.")
 else:
     print(f"[AI Report] Unsupported provider: {PROVIDER}")
 
@@ -1039,7 +1055,7 @@ def _build_ai_payload(student, show_grades=False):
 
 
 def _call_model(payload):
-    """Unified LLM call – works with Gemini or OpenAI.
+    """Unified LLM call – works with Gemini, OpenAI, or Groq.
     Builds the prompt (including grades & remark) and returns the comment.
     """
     # ---- Build extra instructions ------------------------------------------------
@@ -1063,7 +1079,7 @@ def _call_model(payload):
     if PROVIDER == "gemini":
         response = _gemini_model.generate_content(prompt)
         raw = response.text.strip()
-    else:  # openai
+    elif PROVIDER in {"openai", "groq"}:
         system_msg = (
             "You are a college mentor personally writing a short comment about one student for the semester mentor report. "
             "Write exactly ONE paragraph of 90 to 130 words in warm, natural, conversational English — the kind a real mentor would actually type themselves. "
@@ -1083,7 +1099,7 @@ def _call_model(payload):
             "11. Silently fix all spelling/grammar mistakes.\n"
             "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
         )
-        resp = _openai_client.chat.completions.create(
+        resp = _chat_client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_msg},
@@ -1092,6 +1108,8 @@ def _call_model(payload):
             temperature=0.7,
         )
         raw = resp.choices[0].message.content.strip()
+    else:
+        raise RuntimeError(f"Unsupported AI provider: {PROVIDER}")
 
     # ---- Clean up possible markdown fences --------------------------------------
     raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.DOTALL)
@@ -1106,7 +1124,7 @@ def _call_model(payload):
 
 
 def fallback_comment(payload):
-    """Fixed template used when Gemini fails or is unavailable."""
+    """Fixed template used when AI generation fails or is unavailable."""
     name = payload.get('name', 'The student')
     low = payload.get('low_subjects', [])
     event = payload.get('event', '')
@@ -1185,7 +1203,7 @@ def _generate_for_one(student, show_grades=False):
     comment = None
     ai_generated = False
     ai_warning = None
-    if GEMINI_AVAILABLE:
+    if AI_PROVIDER_AVAILABLE:
         try:
             comment = _call_model(payload)
             _validate_ai_comment(comment, payload)
@@ -1205,7 +1223,7 @@ def _generate_for_one(student, show_grades=False):
                         comment = None
                 if not comment:
                     ai_warning = (
-                        "Gemini's request limit was reached; a template comment was used. "
+                        f"{PROVIDER.title()}'s request limit was reached; a template comment was used. "
                         "Wait for the quota window to reset, then try again."
                     )
             else:
@@ -1219,7 +1237,7 @@ def _generate_for_one(student, show_grades=False):
                     comment = None
                     if _is_rate_limit_error(retry_err):
                         ai_warning = (
-                            "Gemini's request limit was reached; a template comment was used. "
+                            f"{PROVIDER.title()}'s request limit was reached; a template comment was used. "
                             "Wait for the quota window to reset, then try again."
                         )
                     else:
@@ -1275,7 +1293,7 @@ def generate_comment_report():
         show_grades = False
 
     results = []
-    # Keep Gemini calls sequential; OpenAI can use a small parallel batch.
+    # Keep Gemini calls sequential; OpenAI-compatible providers can use a small parallel batch.
     BATCH = 5
     # Serialize Gemini requests to avoid exceeding low free-tier per-minute quotas.
     max_workers = 1 if PROVIDER == "gemini" else BATCH
