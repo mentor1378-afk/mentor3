@@ -21,44 +21,50 @@ from datetime import datetime
 import pytz
 from pptx.oxml.xmlchemy import OxmlElement
 
-# --- AI Comment Report: Gemini API key (hardcoded) ---
-GEMINI_API_KEY = "AIzaSyCiyAMINFCTvI-nNijt8QWGtHLJUTKtM7w"
+# --- AI Comment Report: environment-driven setup ---
+DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_AVAILABLE = False
+_gemini_model = None
 
-try:
-    import google.generativeai as genai
-    genai.configure(api_key=GEMINI_API_KEY)
-    _gemini_model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=(
-            "You are a caring and professional college mentor writing a short comment for one student "
-            "in a mentor report. Write exactly ONE paragraph of 90 to 130 words in simple, correct English "
-            "with no grammar or spelling mistakes. Write in the third person, using the student's name and "
-            "the correct pronouns (he or she) given in the input.\n"
-            "Rules:\n"
-            "1. Mention attendance ONLY for subjects below 80%. Give the subject name and the percentage, "
-            "for example 'Data Structures (75%)'. Never list attendance for subjects at or above 80%.\n"
-            "2. If the student has no subject below 80%, say attendance is consistent or good and advise "
-            "keeping it up. If a subject is at exactly 80%, advise the student to take care it does not fall below.\n"
-            "3. If below 80% in only ONE subject, add that attendance in the other slots is good.\n"
-            "4. If below 80% in several subjects, advise attending every upcoming class. If any subject is below "
-            "60%, add a recommendation to meet the faculty and parents, in a supportive tone.\n"
-            "5. If the student has an event achievement, congratulate warmly and mention the event, organizer and prize. "
-            "If no event, encourage joining a hackathon, symposium or CTF. Mention online courses similarly.\n"
-            "6. Always end on an encouraging, positive note. Never blame, threaten or shame the student.\n"
-            "7. Do not mention private reasons such as health or family in detail.\n"
-            "8. Use only the facts given. Do not invent marks, events, subjects or percentages.\n"
-            "9. Do not use bullet points, headings or quotation marks. Output only the paragraph.\n"
-            "10. Silently correct all student spelling/capitalization/grammar mistakes in your output. "
-            "Do not change numbers, percentages, Reg. Nos or course codes.\n"
-            "11. Before answering, re-read your paragraph once and fix any spelling, grammar or punctuation mistake.\n"
-            "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
+if GEMINI_API_KEY:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+        _gemini_model = genai.GenerativeModel(
+            model_name=DEFAULT_GEMINI_MODEL,
+            system_instruction=(
+                "You are a caring and professional college mentor writing a short comment for one student "
+                "in a mentor report. Write exactly ONE paragraph of 90 to 130 words in simple, correct English "
+                "with no grammar or spelling mistakes. Write in the third person, using the student's name and "
+                "the correct pronouns (he or she) given in the input.\n"
+                "Rules:\n"
+                "1. Mention attendance ONLY for subjects below 80%. Give the subject name and the percentage, "
+                "for example 'Data Structures (75%)'. Never list attendance for subjects at or above 80%.\n"
+                "2. If the student has no subject below 80%, say attendance is consistent or good and advise "
+                "keeping it up. If a subject is at exactly 80%, advise the student to take care it does not fall below.\n"
+                "3. If below 80% in only ONE subject, add that attendance in the other slots is good.\n"
+                "4. If below 80% in several subjects, advise attending every upcoming class. If any subject is below "
+                "60%, add a recommendation to meet the faculty and parents, in a supportive tone.\n"
+                "5. If the student has an event achievement, congratulate warmly and mention the event, organizer and prize. "
+                "If no event, encourage joining a hackathon, symposium or CTF. Mention online courses similarly.\n"
+                "6. Always end on an encouraging, positive note. Never blame, threaten or shame the student.\n"
+                "7. Do not mention private reasons such as health or family in detail.\n"
+                "8. Use only the facts given. Do not invent marks, events, subjects or percentages.\n"
+                "9. Do not use bullet points, headings or quotation marks. Output only the paragraph.\n"
+                "10. Silently correct all student spelling/capitalization/grammar mistakes in your output. "
+                "Do not change numbers, percentages, Reg. Nos or course codes.\n"
+                "11. Before answering, re-read your paragraph once and fix any spelling, grammar or punctuation mistake.\n"
+                "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
+            )
         )
-    )
-    GEMINI_AVAILABLE = True
-except Exception as _ge:
-    print(f"[AI Report] Gemini not available: {_ge}")
-    GEMINI_AVAILABLE = False
-    _gemini_model = None
+        GEMINI_AVAILABLE = True
+    except Exception as _ge:
+        print(f"[AI Report] Gemini not available: {_ge}")
+        GEMINI_AVAILABLE = False
+        _gemini_model = None
+else:
+    print("[AI Report] GEMINI_API_KEY is not set. AI comment generation will use fallback text.")
 
 try:
     from docx import Document
@@ -80,7 +86,7 @@ def add_highlight(run, color_hex):
     rPr.append(highlight)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'cinematic_secret_key_123'
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or os.urandom(32)
 uri = os.environ.get("DATABASE_URL", "sqlite:///database.db")
 if uri.startswith("postgres://"):
     uri = uri.replace("postgres://", "postgresql://", 1)
@@ -180,11 +186,19 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def seed_db():
-    # Faculty: Ashwin@123
-    if not User.query.get('Ashwin@123'):
+    # Rename the existing seeded faculty login without changing its password.
+    previous_faculty = User.query.get('Ashwin@123')
+    renamed_faculty = User.query.get('Gnanavel@123')
+    if previous_faculty and not renamed_faculty:
+        previous_faculty.username = 'Gnanavel@123'
+    elif previous_faculty and renamed_faculty:
+        print("[Account migration] Both faculty usernames exist; keeping both accounts unchanged.")
+    elif not renamed_faculty:
         db.session.add(User(
-            username='Ashwin@123',
-            password_hash=bcrypt.generate_password_hash('welcome').decode('utf-8'),
+            username='Gnanavel@123',
+            password_hash=bcrypt.generate_password_hash(
+                os.getenv('GNANAVEL_INITIAL_PASSWORD', 'welcome')
+            ).decode('utf-8'),
             role='faculty'
         ))
 
@@ -192,34 +206,27 @@ def seed_db():
     if not User.query.get('admin@123'):
         db.session.add(User(
             username='admin@123',
-            password_hash=bcrypt.generate_password_hash('welcome').decode('utf-8'),
+            password_hash=bcrypt.generate_password_hash(
+                os.getenv('ADMIN_INITIAL_PASSWORD', 'welcome')
+            ).decode('utf-8'),
             role='faculty'
         ))
 
-    # Demo student: 24REG01
-    if not User.query.get('24REG01'):
-        db.session.add(User(
-            username='24REG01',
-            password_hash=bcrypt.generate_password_hash('student123').decode('utf-8'),
-            role='student'
-        ))
-        db.session.add(StudentDetail(
-            reg_num='24REG01',
-            name='Ibrahim',
-            course='CSA0708 - Computer Networks',
-            slot_info=json.dumps(['Slot A', 'Slot B']),
-            attendance_data=json.dumps({'Slot A': 81, 'Slot B': 98}),
-            marks_data=json.dumps({'Slot A': {'model': '20', 'test1': '20', 'avg': '15'}}),
-            last_updated=datetime.now(pytz.timezone('Asia/Kolkata')).replace(tzinfo=None)
-        ))
+    # Remove only the two known demo students previously inserted by seed_db.
+    demo_student = StudentDetail.query.filter_by(
+        reg_num='24REG01',
+        name='Ibrahim',
+        course='CSA0708 - Computer Networks',
+    ).first()
+    if demo_student:
+        db.session.delete(demo_student)
+        demo_account = User.query.filter_by(username='24REG01', role='student').first()
+        if demo_account:
+            db.session.delete(demo_account)
 
-    # Demo student: Ibrahim@123
-    if not User.query.get('Ibrahim@123'):
-        db.session.add(User(
-            username='Ibrahim@123',
-            password_hash=bcrypt.generate_password_hash('welcome').decode('utf-8'),
-            role='student'
-        ))
+    demo_account = User.query.filter_by(username='Ibrahim@123', role='student').first()
+    if demo_account and not StudentDetail.query.get('Ibrahim@123'):
+        db.session.delete(demo_account)
 
     db.session.commit()
 
@@ -229,13 +236,17 @@ with app.app_context():
         from sqlalchemy import inspect
         inspector = inspect(db.engine)
         columns = [col['name'] for col in inspector.get_columns('student_detail')]
-        if 'last_updated' not in columns:
-            col_type = 'TIMESTAMP' if db.engine.name == 'postgresql' else 'DATETIME'
-            db.session.execute(db.text(f'ALTER TABLE student_detail ADD COLUMN last_updated {col_type}'))
-            db.session.commit()
-        if 'results_data' not in columns:
-            db.session.execute(db.text('ALTER TABLE student_detail ADD COLUMN results_data TEXT DEFAULT \'[]\''))
-            db.session.commit()
+
+        def add_column_if_missing(column_name, ddl):
+            if column_name not in columns:
+                db.session.execute(db.text(f'ALTER TABLE student_detail ADD COLUMN {column_name} {ddl}'))
+                db.session.commit()
+                columns.append(column_name)
+
+        add_column_if_missing('last_updated', 'DATETIME' if db.engine.name != 'postgresql' else 'TIMESTAMP')
+        add_column_if_missing('results_data', "TEXT DEFAULT '[]'")
+        add_column_if_missing('custom_advisory', 'TEXT')
+        add_column_if_missing('mentor_username', 'VARCHAR(50)')
     except Exception as e:
         db.session.rollback()
         print(f"Migration error: {e}")
@@ -549,7 +560,7 @@ def generate_report():
         slots = student.get_slots()
         att_data = student.get_attendance()
         marks_data = student.get_marks()
-        mentor_name = "Mr. V. Ashwin"
+        mentor_name = "GNANAVEL V K"
         
         # --- SLIDE 1: ACADEMIC PERFORMANCE ---
         slide_layout = prs.slide_layouts[6] # Blank
@@ -1121,7 +1132,7 @@ def generate_comment_report():
 def download_comment_report():
     """
     POST /download_comment_report
-    Accepts JSON body { "mentor_name": "Mr. V. Ashwin", "comments": [{ "reg_no", "name", "comment" }] }
+    Accepts JSON body { "mentor_name": "GNANAVEL V K", "comments": [{ "reg_no", "name", "comment" }] }
     Returns a .docx file download.
     """
     if 'user' not in session or session['role'] != 'faculty':
@@ -1131,7 +1142,7 @@ def download_comment_report():
         return jsonify({'error': 'python-docx not installed on server'}), 500
 
     data = request.get_json(silent=True) or {}
-    mentor_name = data.get('mentor_name', 'Mr. V. Ashwin').strip()
+    mentor_name = data.get('mentor_name', 'GNANAVEL V K').strip()
     comments = data.get('comments', [])
 
     doc = Document()

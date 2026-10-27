@@ -11,4 +11,5 @@ cloudinary
 psycopg2-binary
 pytz
 google-generativeai
+openai
 python-docx

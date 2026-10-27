@@ -39,7 +39,7 @@
                 <div class="text-left">
                     <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2 ml-1">Username</label>
                     <div class="relative">
-                        <input type="text" name="username" required class="premium-input pl-10" placeholder="FACULTY01">
+                        <input type="text" name="username" required class="premium-input pl-10" placeholder="Enter your username">
                         <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">👤</span>
                     </div>
                 </div>
@@ -83,20 +83,6 @@
             {% endfor %}
             {% endif %}
             {% endwith %}
-
-            <div class="mt-8">
-                <p class="text-[10px] uppercase text-gray-500 font-bold mb-4 tracking-widest">Select Role</p>
-                <div class="flex gap-4">
-                    <div onclick="document.querySelector('[name=username]').value='FACULTY01'; document.querySelector('[name=password]').value='faculty123';"
-                        class="flex-1 p-3 border border-white/10 rounded-2xl bg-white/5 cursor-pointer hover:bg-purple-500/10 hover:border-purple-500/30 transition-all duration-300">
-                        <span class="text-sm font-bold text-white/90">👔 Faculty</span>
-                    </div>
-                    <div onclick="document.querySelector('[name=username]').value='211801001'; document.querySelector('[name=password]').value='student123';"
-                        class="flex-1 p-3 border border-white/10 rounded-2xl bg-white/5 cursor-pointer hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300">
-                        <span class="text-sm font-bold text-white/90">🎓 Student</span>
-                    </div>
-                </div>
-            </div>
 
             <div class="mt-10 text-[10px] text-white font-bold tracking-[0.2em] uppercase space-y-1 opacity-80">
                 <p>© SIMATS Engineering</p>

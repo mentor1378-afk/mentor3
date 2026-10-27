@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: mentor-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: MODEL_SELECTION
+        value: GEMINI
+      - key: GNANAVEL_INITIAL_PASSWORD
+        sync: false
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false

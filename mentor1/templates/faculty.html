@@ -54,7 +54,7 @@
             <div id="home-section">
                 <header class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
                     <div class="text-center md:text-left">
-                        <h1 class="text-2xl font-black font-outfit text-white">Welcome, Mr. V. Ashwin</h1>
+                        <h1 class="text-2xl font-black font-outfit text-white">Welcome, GNANAVEL V K</h1>
                         <p class="text-gray-500 text-sm mt-1 uppercase tracking-widest text-[10px] font-bold">Mentor
                             Dashboard</p>
                     </div>
@@ -494,7 +494,7 @@
                     <div class="flex-1">
                         <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Mentor Name (for
                             document header)</label>
-                        <input type="text" id="ai-mentor-name" value="Mr. V. Ashwin"
+                        <input type="text" id="ai-mentor-name" value="GNANAVEL V K"
                             class="premium-input bg-[#0d1117] max-w-xs text-sm" placeholder="Enter mentor name">
                     </div>
                     <button id="ai-generate-btn" onclick="generateCommentReport()"
@@ -586,6 +586,17 @@
         // Holds the currently generated results
         let _aiResults = [];
 
+        function renderAiSummary(results) {
+            const lowCount = results.filter(r => r.low_count > 0).length;
+            const eventCount = results.filter(r => r.has_event).length;
+            const fallbackCount = results.filter(r => !r.ai_generated).length;
+            document.getElementById('ai-summary-text').innerHTML =
+                `<span class="font-bold text-white">${results.length}</span> student comments generated &nbsp;·&nbsp; ` +
+                `<span class="text-red-400 font-bold">${lowCount}</span> with low attendance &nbsp;·&nbsp; ` +
+                `<span class="text-emerald-400 font-bold">${eventCount}</span> with event achievements` +
+                (fallbackCount ? ` &nbsp;·&nbsp; <span class="text-amber-400 font-bold">${fallbackCount}</span> used template fallback` : '');
+        }
+
         function setAiUiState(state, msg) {
             // state: 'idle' | 'loading' | 'preview' | 'error'
             document.getElementById('ai-loading').classList.add('hidden');
@@ -611,12 +622,7 @@
             const container = document.getElementById('ai-cards-container');
             container.innerHTML = '';
 
-            const lowCount = results.filter(r => r.low_count > 0).length;
-            const eventCount = results.filter(r => r.has_event).length;
-            document.getElementById('ai-summary-text').innerHTML =
-                `<span class="font-bold text-white">${results.length}</span> student comments generated &nbsp;·&nbsp; ` +
-                `<span class="text-red-400 font-bold">${lowCount}</span> with low attendance &nbsp;·&nbsp; ` +
-                `<span class="text-emerald-400 font-bold">${eventCount}</span> with event achievements`;
+            renderAiSummary(results);
 
             results.forEach((r, idx) => {
                 const corrections = r.corrections || [];
@@ -641,6 +647,12 @@
                     : `<span class="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">Good Attendance</span>`;
                 const evBadge = r.has_event
                     ? `<span class="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-bold">Event ✓</span>` : '';
+                const aiStatus = r.ai_generated
+                    ? `<span id="ai-status-${idx}" class="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold">AI generated</span>`
+                    : `<span id="ai-status-${idx}" class="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold">Template fallback</span>`;
+                const aiWarning = !r.ai_generated && r.ai_warning
+                    ? escHtml(r.ai_warning)
+                    : '';
 
                 const card = document.createElement('div');
                 card.id = `ai-card-${idx}`;
@@ -652,7 +664,9 @@
                                 <h3 class="text-white font-bold">${escHtml(r.name)}</h3>
                                 <span class="text-[10px] font-mono text-gray-500">${escHtml(r.reg_no)}</span>
                                 ${lowBadge} ${evBadge}
+                                ${aiStatus}
                             </div>
+                            <p id="ai-warning-${idx}" class="text-amber-300 text-xs mt-2 ${aiWarning ? '' : 'hidden'}">${aiWarning}</p>
                             ${corrHtml}
                         </div>
                         <button onclick="regenerateOne('${escHtml(r.reg_no)}', ${idx})"
@@ -717,10 +731,24 @@
                 if (!res.ok) throw new Error(`Server error ${res.status}`);
                 const results = await res.json();
                 if (results.length > 0 && ta) {
-                    ta.value = results[0].comment;
+                    const updated = results[0];
+                    ta.value = updated.comment;
                     // Update stored result
                     const existing = _aiResults.findIndex(r => r.reg_no === regNo);
-                    if (existing >= 0) _aiResults[existing].comment = results[0].comment;
+                    if (existing >= 0) _aiResults[existing] = { ..._aiResults[existing], ...updated };
+                    const status = document.getElementById(`ai-status-${idx}`);
+                    if (status) {
+                        status.textContent = updated.ai_generated ? 'AI generated' : 'Template fallback';
+                        status.className = updated.ai_generated
+                            ? 'text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold'
+                            : 'text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold';
+                    }
+                    const warning = document.getElementById(`ai-warning-${idx}`);
+                    if (warning) {
+                        warning.textContent = updated.ai_warning || '';
+                        warning.classList.toggle('hidden', Boolean(updated.ai_generated || !updated.ai_warning));
+                    }
+                    renderAiSummary(_aiResults);
                 }
             } catch (e) {
                 alert('Regeneration failed: ' + e.message);
@@ -735,7 +763,7 @@
 
         async function downloadDocx() {
             // Collect all current textarea values
-            const mentorName = document.getElementById('ai-mentor-name').value.trim() || 'Mr. V. Ashwin';
+            const mentorName = document.getElementById('ai-mentor-name').value.trim() || 'GNANAVEL V K';
             const comments = _aiResults.map((r, idx) => ({
                 reg_no: r.reg_no,
                 name: r.name,

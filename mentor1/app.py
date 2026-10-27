@@ -21,44 +21,75 @@ from datetime import datetime
 import pytz
 from pptx.oxml.xmlchemy import OxmlElement
 
-# --- AI Comment Report: Gemini API key (hardcoded) ---
-GEMINI_API_KEY = "AIzaSyCiyAMINFCTvI-nNijt8QWGtHLJUTKtM7w"
+# --- Dynamic model selection -------------------------------------------------
 
-try:
-    import google.generativeai as genai
-    genai.configure(api_key=GEMINI_API_KEY)
-    _gemini_model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=(
-            "You are a caring and professional college mentor writing a short comment for one student "
-            "in a mentor report. Write exactly ONE paragraph of 90 to 130 words in simple, correct English "
-            "with no grammar or spelling mistakes. Write the comment as if the mentor is speaking directly, using the mentor's voice (e.g., 'I advise ...' or 'We recommend ...') while still referencing the student's name and appropriate pronouns.\n"
-            "Rules:\n"
-            "1. Mention attendance ONLY for subjects below 80%. Give the subject name and the percentage, "
-            "for example 'Data Structures (75%)'. Never list attendance for subjects at or above 80%.\n"
-            "2. If the student has no subject below 80%, say attendance is consistent or good and advise "
-            "keeping it up. If a subject is at exactly 80%, advise the student to take care it does not fall below.\n"
-            "3. If below 80% in only ONE subject, add that attendance in the other slots is good.\n"
-            "4. If below 80% in several subjects, advise attending every upcoming class. If any subject is below "
-            "60%, add a recommendation to meet the faculty and parents, in a supportive tone.\n"
-            "5. If the student has an event achievement, congratulate warmly and mention the event, organizer and prize. "
-            "If no event, encourage joining a hackathon, symposium or CTF. Mention online courses similarly.\n"
-            "6. Always end on an encouraging, positive note. Never blame, threaten or shame the student.\n"
-            "7. Do not mention private reasons such as health or family in detail.\n"
-            "8. Use only the facts given. Do not invent marks, events, subjects or percentages.\n"
-            "9. Do not use bullet points, headings or quotation marks. Output only the paragraph.\n"
-            "10. Silently correct all student spelling/capitalization/grammar mistakes in your output. "
-            "Do not change numbers, percentages, Reg. Nos or course codes.\n"
-            "11. Before answering, re-read your paragraph once and fix any spelling, grammar or punctuation mistake.\n"
-            "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}",
-        )
+_GEMINI_SYSTEM_INSTRUCTION = (
+    "You are a caring and professional college mentor writing one short paragraph for a student report. "
+    "Use only the supplied facts, mention attendance only for subjects below 80%, and give the subject and "
+    "percentage. Encourage students warmly, do not invent facts, and do not use headings or bullet points. "
+    'Return only a JSON object with "reg_no" and "comment" fields.'
+)
+
+def _get_model_choice():
+    """Return the configured provider, model name, and API key."""
+    gemini_key = (
+        (os.getenv("GEMINI_API_KEY") or "").strip()
+        or (os.getenv("GOOGLE_API_KEY") or "").strip()
     )
-    GEMINI_AVAILABLE = True
-except Exception as _ge:
-    print(f"[AI Report] Gemini not available: {_ge}")
-    GEMINI_AVAILABLE = False
-    _gemini_model = None
+    openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    choice = (os.getenv("MODEL_SELECTION") or "").strip().upper()
 
+    if not choice:
+        choice = "GEMINI" if gemini_key else "OPENAI" if openai_key else "GEMINI"
+
+    if choice == "OPENAI":
+        return ("openai", os.getenv("OPENAI_MODEL", "gpt-4o-mini"), openai_key or None)
+    if choice == "GEMINI":
+        return (
+            "gemini",
+            os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            gemini_key or None,
+        )
+
+    return (choice.lower(), "", None)
+
+PROVIDER, MODEL_NAME, API_KEY = _get_model_choice()
+GEMINI_AVAILABLE = False
+_gemini_model = None
+_openai_client = None
+
+if PROVIDER == "gemini":
+    if API_KEY:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=API_KEY)
+            _gemini_model = genai.GenerativeModel(
+                model_name=MODEL_NAME,
+                system_instruction=_GEMINI_SYSTEM_INSTRUCTION,
+            )
+            GEMINI_AVAILABLE = True
+        except Exception as exc:
+            print(f"[AI Report] Gemini not available: {exc}")
+            GEMINI_AVAILABLE = False
+            _gemini_model = None
+    else:
+        print("[AI Report] Gemini not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI comment generation.")
+elif PROVIDER == "openai":
+    if API_KEY:
+        try:
+            import openai
+            _openai_client = openai.OpenAI(api_key=API_KEY)
+            GEMINI_AVAILABLE = True
+        except Exception as exc:
+            print(f"[AI Report] OpenAI not available: {exc}")
+            GEMINI_AVAILABLE = False
+            _openai_client = None
+    else:
+        print("[AI Report] OpenAI not configured. Set OPENAI_API_KEY to enable AI comment generation.")
+else:
+    print(f"[AI Report] Unsupported provider: {PROVIDER}")
+
+# --- Document generation libraries ------------------------------------------------
 try:
     from docx import Document
     from docx.shared import Pt as DocxPt, Inches as DocxInches, RGBColor as DocxRGB
@@ -79,7 +110,7 @@ def add_highlight(run, color_hex):
     rPr.append(highlight)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'cinematic_secret_key_123'
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or os.urandom(32)
 uri = os.environ.get("DATABASE_URL", "sqlite:///database.db")
 if uri.startswith("postgres://"):
     uri = uri.replace("postgres://", "postgresql://", 1)
@@ -179,11 +210,19 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def seed_db():
-    # Faculty: Ashwin@123
-    if not User.query.get('Ashwin@123'):
+    # Rename the existing seeded faculty login without changing its password.
+    previous_faculty = User.query.get('Ashwin@123')
+    renamed_faculty = User.query.get('Gnanavel@123')
+    if previous_faculty and not renamed_faculty:
+        previous_faculty.username = 'Gnanavel@123'
+    elif previous_faculty and renamed_faculty:
+        print("[Account migration] Both faculty usernames exist; keeping both accounts unchanged.")
+    elif not renamed_faculty:
         db.session.add(User(
-            username='Ashwin@123',
-            password_hash=bcrypt.generate_password_hash('welcome').decode('utf-8'),
+            username='Gnanavel@123',
+            password_hash=bcrypt.generate_password_hash(
+                os.getenv('GNANAVEL_INITIAL_PASSWORD', 'welcome')
+            ).decode('utf-8'),
             role='faculty'
         ))
 
@@ -191,34 +230,27 @@ def seed_db():
     if not User.query.get('admin@123'):
         db.session.add(User(
             username='admin@123',
-            password_hash=bcrypt.generate_password_hash('welcome').decode('utf-8'),
+            password_hash=bcrypt.generate_password_hash(
+                os.getenv('ADMIN_INITIAL_PASSWORD', 'welcome')
+            ).decode('utf-8'),
             role='faculty'
         ))
 
-    # Demo student: 24REG01
-    if not User.query.get('24REG01'):
-        db.session.add(User(
-            username='24REG01',
-            password_hash=bcrypt.generate_password_hash('student123').decode('utf-8'),
-            role='student'
-        ))
-        db.session.add(StudentDetail(
-            reg_num='24REG01',
-            name='Ibrahim',
-            course='CSA0708 - Computer Networks',
-            slot_info=json.dumps(['Slot A', 'Slot B']),
-            attendance_data=json.dumps({'Slot A': 81, 'Slot B': 98}),
-            marks_data=json.dumps({'Slot A': {'model': '20', 'test1': '20', 'avg': '15'}}),
-            last_updated=datetime.now(pytz.timezone('Asia/Kolkata')).replace(tzinfo=None)
-        ))
+    # Remove only the two known demo students previously inserted by seed_db.
+    demo_student = StudentDetail.query.filter_by(
+        reg_num='24REG01',
+        name='Ibrahim',
+        course='CSA0708 - Computer Networks',
+    ).first()
+    if demo_student:
+        db.session.delete(demo_student)
+        demo_account = User.query.filter_by(username='24REG01', role='student').first()
+        if demo_account:
+            db.session.delete(demo_account)
 
-    # Demo student: Ibrahim@123
-    if not User.query.get('Ibrahim@123'):
-        db.session.add(User(
-            username='Ibrahim@123',
-            password_hash=bcrypt.generate_password_hash('welcome').decode('utf-8'),
-            role='student'
-        ))
+    demo_account = User.query.filter_by(username='Ibrahim@123', role='student').first()
+    if demo_account and not StudentDetail.query.get('Ibrahim@123'):
+        db.session.delete(demo_account)
 
     db.session.commit()
 
@@ -228,16 +260,17 @@ with app.app_context():
         from sqlalchemy import inspect
         inspector = inspect(db.engine)
         columns = [col['name'] for col in inspector.get_columns('student_detail')]
-        if 'last_updated' not in columns:
-            col_type = 'TIMESTAMP' if db.engine.name == 'postgresql' else 'DATETIME'
-            db.session.execute(db.text(f'ALTER TABLE student_detail ADD COLUMN last_updated {col_type}'))
-            db.session.commit()
-        if 'results_data' not in columns:
-            db.session.execute(db.text('ALTER TABLE student_detail ADD COLUMN results_data TEXT DEFAULT \'[]\''))
-            db.session.commit()
-        if 'custom_advisory' not in columns:
-            db.session.execute(db.text('ALTER TABLE student_detail ADD COLUMN custom_advisory TEXT'))
-            db.session.commit()
+
+        def add_column_if_missing(column_name, ddl):
+            if column_name not in columns:
+                db.session.execute(db.text(f'ALTER TABLE student_detail ADD COLUMN {column_name} {ddl}'))
+                db.session.commit()
+                columns.append(column_name)
+
+        add_column_if_missing('last_updated', 'DATETIME' if db.engine.name != 'postgresql' else 'TIMESTAMP')
+        add_column_if_missing('results_data', "TEXT DEFAULT '[]'")
+        add_column_if_missing('custom_advisory', 'TEXT')
+        add_column_if_missing('mentor_username', 'VARCHAR(50)')
     except Exception as e:
         db.session.rollback()
         print(f"Migration error: {e}")
@@ -551,7 +584,7 @@ def generate_report():
         slots = student.get_slots()
         att_data = student.get_attendance()
         marks_data = student.get_marks()
-        mentor_name = "Mr. V. Ashwin"
+        mentor_name = "GNANAVEL V K"
         
         # --- SLIDE 1: ACADEMIC PERFORMANCE ---
         slide_layout = prs.slide_layouts[6] # Blank
@@ -880,6 +913,17 @@ def delete_all_reports():
 # AI MENTOR COMMENT REPORT
 # ===========================================================================
 
+def _get_grades(student):
+    """Return a list like [{'subject': 'Math', 'grade': 'A'}, ...] from student.results_data."""
+    try:
+        results = json.loads(student.results_data or "[]")
+        return [
+            {"subject": r.get("subject", "N/A"), "grade": r.get("grade", "N/A")}
+            for r in results
+        ]
+    except Exception:
+        return []
+
 def correct_student_text(text):
     """
     Lightweight correction of common student-side typos:
@@ -903,7 +947,7 @@ def correct_student_text(text):
     if corrected == corrected.lower() and corrected:
         corrected = corrected.title()
 
-    # Fix 5g/6g → 5G/6G style (digit+letter combinations should be uppercase)
+    # Fix 5g/6g -> 5G/6G style (digit+letter combinations should be uppercase)
     def uppercase_tech(m):
         return m.group(0).upper()
     corrected = re.sub(r'\b(\d+[a-zA-Z]+|\b(?:ai|ml|iot|nlp|dsa|dbms|os|cn|se|pdsd|coa|psp|oop|oops|tcp|ip|rdbms|sql|html|css|js|php|ui|ux|api|sdk|ide|lms|erp|crm|gps|ble|rfid|otp|sms|cse|it|ece|eee|be|btech|mtech|mba|mca)\b)', uppercase_tech, corrected, flags=re.IGNORECASE)
@@ -912,9 +956,13 @@ def correct_student_text(text):
     return corrected, changed
 
 
-def _build_ai_payload(student):
+
+
+def _build_ai_payload(student, show_grades=False):
     """
     Compute facts in pure Python for one student.
+    show_grades must be passed from the main thread (not queried here)
+    to avoid SQLAlchemy thread-safety issues.
     Returns (payload_dict, corrections_list)
     """
     att_data = student.get_attendance()
@@ -977,21 +1025,80 @@ def _build_ai_payload(student):
         'student_remark': remark,
         'institution': 'SIMATS Engineering',
     }
+
+    # Include grades only when the flag is explicitly passed as True
+    # (flag must be read in the main thread before spawning worker threads)
+    if show_grades:
+        payload['grades'] = _get_grades(student)
+
     return payload, corrections
 
 
-def _call_gemini(payload):
-    """Call Gemini and return the comment string. Raises on failure."""
-    prompt = f"Input: {json.dumps(payload, ensure_ascii=False)}"
-    response = _gemini_model.generate_content(prompt)
-    raw = response.text.strip()
+def _call_model(payload):
+    """Unified LLM call – works with Gemini or OpenAI.
+    Builds the prompt (including grades & remark) and returns the comment.
+    """
+    # ---- Build extra instructions ------------------------------------------------
+    extra_parts = []
+    if payload.get('grades'):
+        grades_txt = ', '.join(f"{g['subject']} ({g['grade']})" for g in payload['grades'])
+        extra_parts.append(
+            f"The student has the following grades that MUST be woven naturally into the comment: {grades_txt}."
+        )
+    remark = (payload.get('student_remark') or '').strip()
+    if remark:
+        extra_parts.append(
+            f"The student has shared this personal remark/reason (e.g. for low attendance): '{remark}'. "
+            f"Acknowledge it briefly and sensitively in the comment — do NOT copy it word for word, "
+            f"just mention that the student has explained the situation and encourage them going forward."
+        )
+    extra = ("\n" + " ".join(extra_parts)) if extra_parts else ""
+    prompt = f"Input: {json.dumps(payload, ensure_ascii=False)}{extra}"
 
-    # Strip markdown code fences if model wraps in ```json ... ```
+    # ---- Dispatch ---------------------------------------------------------------
+    if PROVIDER == "gemini":
+        response = _gemini_model.generate_content(prompt)
+        raw = response.text.strip()
+    else:  # openai
+        system_msg = (
+            "You are a college mentor personally writing a short comment about one student for the semester mentor report. "
+            "Write exactly ONE paragraph of 90 to 130 words in warm, natural, conversational English — the kind a real mentor would actually type themselves. "
+            "It should NOT sound generated or formal. Use a genuine first-person mentor voice throughout (e.g. 'I am pleased to note...', 'I personally advised...', 'I encourage...'). "
+            "Vary your sentence structure naturally — avoid starting every sentence the same way. Do NOT repeat the student's full name more than twice.\n"
+            "Rules:\n"
+            "1. Mention attendance ONLY for subjects below 80%. Give the subject name and percentage.\n"
+            "2. If no subject below 80%, mention attendance is consistent and encourage keeping it up.\n"
+            "3. If below 80% in only ONE subject, acknowledge other subjects are good.\n"
+            "4. If below 80% in several subjects, urge attending every upcoming class.\n"
+            "5. Congratulate warmly on event achievements. If no event, encourage joining a hackathon or symposium.\n"
+            "6. If grades are provided, weave them naturally — do not list them mechanically.\n"
+            "7. Always close with a genuine personal encouraging note.\n"
+            "8. Do not mention private reasons such as health or family in detail.\n"
+            "9. Use only the facts given. Do not invent marks, events, subjects or percentages.\n"
+            "10. Output only the paragraph — no bullet points, headings, or quotation marks.\n"
+            "11. Silently fix all spelling/grammar mistakes.\n"
+            "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
+        )
+        resp = _openai_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+        )
+        raw = resp.choices[0].message.content.strip()
+
+    # ---- Clean up possible markdown fences --------------------------------------
     raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.DOTALL)
     raw = re.sub(r'\s*```$', '', raw, flags=re.DOTALL)
 
-    result = json.loads(raw)
-    return result.get('comment', '').strip()
+    # ---- Try to parse JSON; fall back to raw text if parsing fails -----------
+    try:
+        result = json.loads(raw)
+        return result.get('comment', '').strip()
+    except Exception:
+        return raw
 
 
 def fallback_comment(payload):
@@ -1000,69 +1107,101 @@ def fallback_comment(payload):
     low = payload.get('low_subjects', [])
     event = payload.get('event', '')
     online = payload.get('online_course', '')
+    remark = (payload.get('student_remark') or '').strip()
     gender_pronoun = 'she' if payload.get('gender') == 'female' else 'he'
     gender_pos = 'her' if payload.get('gender') == 'female' else 'his'
+    first = name.split()[0]
 
     if low:
         att_str = ', '.join(f"{s['subject']} ({int(s['percent'])}%)" for s in low)
         att_sentence = (f"{name} has recorded attendance below 80% in the following subject(s): "
-                        f"{att_str}. {name.split()[0]} is encouraged to attend every upcoming class "
+                        f"{att_str}. I encourage {first} to attend every upcoming class "
                         f"to bring {gender_pos} attendance above 80%.")
     else:
         att_sentence = (f"{name} has maintained consistent attendance across all subjects, "
                         f"which reflects {gender_pos} commitment and dedication.")
 
+    remark_sentence = ''
+    if remark:
+        remark_sentence = (f" I have noted {first}'s personal explanation regarding this, "
+                           f"and I appreciate {gender_pos} transparency. "
+                           f"I encourage {first} to manage {gender_pos} responsibilities proactively going forward.")
+
     event_sentence = ''
     if event:
-        event_sentence = f" {name.split()[0]} participated in {event}, which is highly appreciable."
+        event_sentence = f" {first} participated in {event}, which is highly appreciable."
     else:
-        event_sentence = (f" {name.split()[0]} is encouraged to participate in upcoming hackathons, "
+        event_sentence = (f" I encourage {first} to participate in upcoming hackathons, "
                           f"symposiums, or workshops to further develop {gender_pos} skills.")
 
     course_sentence = ''
     if online:
-        course_sentence = (f" {name.split()[0]} is also pursuing an online course in {online}, "
+        course_sentence = (f" {first} is also pursuing an online course in {online}, "
                            f"which shows {gender_pos} eagerness to learn beyond the classroom.")
 
-    closing = (f" Keep up the great work, {name.split()[0]}! "
-               f"The faculty believes in {gender_pos} potential and looks forward to seeing "
+    # Include grades sentence when grades are in payload
+    grades_sentence = ''
+    if payload.get('grades'):
+        grades_list = ', '.join(f"{g['subject']} ({g['grade']})" for g in payload['grades'])
+        grades_sentence = f" {first} has achieved the following grades: {grades_list}."
+
+    closing = (f" Keep it up, {first}! "
+               f"I believe in {gender_pos} potential and look forward to seeing "
                f"{gender_pronoun} achieve great success.")
 
-    return f"{att_sentence}{event_sentence}{course_sentence}{closing}".strip()
+    return f"{att_sentence}{remark_sentence}{event_sentence}{course_sentence}{grades_sentence}{closing}".strip()
 
 
-def _generate_for_one(student):
+def _validate_ai_comment(comment, payload):
+    if not comment:
+        raise ValueError("The AI provider returned an empty comment.")
+    for subject in payload.get('low_subjects', []):
+        name = subject.get('subject', '')
+        percent = subject.get('percent', -1)
+        if name and name.lower() not in comment.lower():
+            raise ValueError(f"Comment missing subject: {name}")
+        if percent >= 0 and str(int(percent)) not in comment:
+            raise ValueError(f"Comment missing percentage for: {name}")
+
+
+def _generate_for_one(student, show_grades=False):
     """Generate comment for a single student. Returns result dict."""
-    payload, corrections = _build_ai_payload(student)
+    payload, corrections = _build_ai_payload(student, show_grades=show_grades)
 
     comment = None
-    if GEMINI_AVAILABLE and _gemini_model:
+    ai_generated = False
+    ai_warning = None
+    if GEMINI_AVAILABLE:
         try:
-            comment = _call_gemini(payload)
-            # Validate: every low subject must appear in comment
-            for ls in payload.get('low_subjects', []):
-                subj = ls.get('subject', '')
-                pct = ls.get('percent', -1)
-                if subj and subj.lower() not in comment.lower():
-                    raise ValueError(f"Comment missing subject: {subj}")
-                if pct >= 0 and str(int(pct)) not in comment:
-                    raise ValueError(f"Comment missing percentage for: {subj}")
+            comment = _call_model(payload)
+            _validate_ai_comment(comment, payload)
+            ai_generated = bool(comment)
         except Exception as first_err:
             print(f"[AI Report] First attempt failed for {student.reg_num}: {first_err}")
             # Retry once
             try:
-                comment = _call_gemini(payload)
+                comment = _call_model(payload)
+                _validate_ai_comment(comment, payload)
+                ai_generated = bool(comment)
             except Exception as retry_err:
                 print(f"[AI Report] Retry failed for {student.reg_num}: {retry_err}")
                 comment = None
+                ai_warning = "AI generation failed; a template comment was used. Check the server logs and API configuration."
+    else:
+        ai_warning = f"{PROVIDER} is unavailable. Check the configured API key and server dependencies."
 
     if not comment:
+        if not ai_warning:
+            ai_warning = "AI returned no comment; a template comment was used. Check the server logs and API configuration."
         comment = fallback_comment(payload)
+        ai_generated = False
 
     return {
         'reg_no': student.reg_num,
         'name': payload['name'],
         'comment': comment,
+        'ai_generated': ai_generated,
+        'ai_warning': ai_warning,
         'corrections': corrections,
         'gender': payload['gender'],
         'low_count': len(payload['low_subjects']),
@@ -1091,11 +1230,18 @@ def generate_comment_report():
     if not students:
         return jsonify({'error': 'No students found'}), 404
 
+    # Read the grades toggle ONCE in the main thread (SQLAlchemy is not thread-safe)
+    try:
+        settings = GlobalSettings.query.first()
+        show_grades = bool(settings and settings.show_grades_in_ppt)
+    except Exception:
+        show_grades = False
+
     results = []
     # Generate in parallel batches of 5
     BATCH = 5
     with ThreadPoolExecutor(max_workers=BATCH) as executor:
-        futures = {executor.submit(_generate_for_one, s): s for s in students}
+        futures = {executor.submit(_generate_for_one, s, show_grades): s for s in students}
         for future in as_completed(futures):
             try:
                 results.append(future.result())
@@ -1103,11 +1249,13 @@ def generate_comment_report():
                 s = futures[future]
                 print(f"[AI Report] Exception for {s.reg_num}: {e}")
                 # Fallback even on executor crash
-                payload, corrections = _build_ai_payload(s)
+                payload, corrections = _build_ai_payload(s, show_grades=show_grades)
                 results.append({
                     'reg_no': s.reg_num,
                     'name': payload['name'],
                     'comment': fallback_comment(payload),
+                    'ai_generated': False,
+                    'ai_warning': "AI generation failed; a template comment was used. Check the server logs.",
                     'corrections': corrections,
                     'gender': payload['gender'],
                     'low_count': len(payload['low_subjects']),
@@ -1123,7 +1271,7 @@ def generate_comment_report():
 def download_comment_report():
     """
     POST /download_comment_report
-    Accepts JSON body { "mentor_name": "Mr. V. Ashwin", "comments": [{ "reg_no", "name", "comment" }] }
+    Accepts JSON body { "mentor_name": "GNANAVEL V K", "comments": [{ "reg_no", "name", "comment" }] }
     Returns a .docx file download.
     """
     if 'user' not in session or session['role'] != 'faculty':
@@ -1133,7 +1281,7 @@ def download_comment_report():
         return jsonify({'error': 'python-docx not installed on server'}), 500
 
     data = request.get_json(silent=True) or {}
-    mentor_name = data.get('mentor_name', 'Mr. V. Ashwin').strip()
+    mentor_name = data.get('mentor_name', 'GNANAVEL V K').strip()
     comments = data.get('comments', [])
 
     doc = Document()
