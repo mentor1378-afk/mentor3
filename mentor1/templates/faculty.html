@@ -9,6 +9,18 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @keyframes ai-card-enter {
+            0% { opacity: 0; transform: translateY(18px) scale(.985); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .ai-batch-card {
+            animation: ai-card-enter .55s cubic-bezier(.22, 1, .36, 1) both;
+        }
+        .ai-batch-progress-fill {
+            transition: width .45s cubic-bezier(.22, 1, .36, 1);
+        }
+    </style>
 </head>
 
 <body class="bg-[#0a0c10]">
@@ -506,12 +518,18 @@
 
                 <!-- Loading overlay -->
                 <div id="ai-loading" class="hidden">
-                    <div class="glass rounded-2xl border border-violet-500/20 p-12 text-center">
+                    <div class="glass rounded-2xl border border-violet-500/20 p-8 text-center">
                         <div
                             class="inline-block w-12 h-12 rounded-full border-4 border-violet-500/30 border-t-violet-400 animate-spin mb-4">
                         </div>
                         <p class="text-white font-bold text-lg" id="ai-loading-text">Generating comments with AI...</p>
-                        <p class="text-gray-500 text-sm mt-1">This may take up to 60 seconds for a large class</p>
+                        <p class="text-gray-500 text-sm mt-1">Comments appear in batches of 3 for easier review</p>
+                        <div class="max-w-md mx-auto mt-5">
+                            <div class="h-2 rounded-full bg-white/10 overflow-hidden">
+                                <div id="ai-progress-fill" class="ai-batch-progress-fill h-full w-0 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-400"></div>
+                            </div>
+                            <p id="ai-progress-text" class="text-[11px] font-bold text-violet-300 mt-2">0 of 0 ready</p>
+                        </div>
                     </div>
                 </div>
 
@@ -601,7 +619,6 @@
             // state: 'idle' | 'loading' | 'preview' | 'error'
             document.getElementById('ai-loading').classList.add('hidden');
             document.getElementById('ai-error').classList.add('hidden');
-            document.getElementById('ai-preview-area').classList.add('hidden');
             document.getElementById('ai-generate-btn').disabled = false;
 
             if (state === 'loading') {
@@ -617,14 +634,19 @@
             }
         }
 
-        function renderCards(results) {
-            _aiResults = results;
+        function renderCards(results, append = false) {
             const container = document.getElementById('ai-cards-container');
-            container.innerHTML = '';
+            const startIndex = append ? _aiResults.length : 0;
+            if (!append) {
+                container.innerHTML = '';
+                _aiResults = [];
+            }
 
-            renderAiSummary(results);
+            _aiResults.push(...results);
+            renderAiSummary(_aiResults);
 
-            results.forEach((r, idx) => {
+            results.forEach((r, batchIdx) => {
+                const idx = startIndex + batchIdx;
                 const corrections = r.corrections || [];
                 const corrHtml = corrections.length
                     ? `<div class="mt-3">
@@ -657,7 +679,8 @@
 
                 const card = document.createElement('div');
                 card.id = `ai-card-${idx}`;
-                card.className = 'glass rounded-2xl border border-white/10 p-5';
+                card.className = 'glass rounded-2xl border border-white/10 p-5 ai-batch-card';
+                card.style.animationDelay = `${batchIdx * 110}ms`;
                 card.innerHTML = `
                     <div class="flex items-start justify-between gap-4 mb-3">
                         <div>
@@ -738,22 +761,62 @@
         }
 
         async function generateCommentReport() {
-            setAiUiState('loading', 'Generating AI comments for all students...');
+            const batchSize = 3;
+            const regNos = studentsData.map(student => student.reg_num).filter(Boolean);
+            if (!regNos.length) {
+                setAiUiState('error', 'No students are available for comment generation.');
+                return;
+            }
+
+            const total = regNos.length;
+            const container = document.getElementById('ai-cards-container');
+            container.innerHTML = '';
+            _aiResults = [];
+            renderAiSummary([]);
+            setAiUiState('loading', `Preparing the first ${Math.min(batchSize, total)} students...`);
+
+            const preview = document.getElementById('ai-preview-area');
+            const progressFill = document.getElementById('ai-progress-fill');
+            const progressText = document.getElementById('ai-progress-text');
+            preview.classList.remove('hidden');
+            progressFill.style.width = '0%';
+            progressText.textContent = `0 of ${total} ready`;
+
             try {
-                const res = await fetch('/generate_comment_report', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
-                });
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({}));
-                    throw new Error(err.error || `Server error ${res.status}`);
+                for (let start = 0; start < total; start += batchSize) {
+                    const batch = regNos.slice(start, start + batchSize);
+                    const batchNumber = Math.floor(start / batchSize) + 1;
+                    document.getElementById('ai-loading-text').textContent =
+                        `Analyzing batch ${batchNumber}: ${batch.length} student${batch.length === 1 ? '' : 's'}...`;
+
+                    const res = await fetch('/generate_comment_report', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reg_nos: batch })
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err.error || `Server error ${res.status}`);
+                    }
+
+                    const results = await res.json();
+                    renderCards(results, true);
+                    const completed = _aiResults.length;
+                    progressFill.style.width = `${Math.round(completed / total * 100)}%`;
+                    progressText.textContent = `${completed} of ${total} ready`;
+                    document.getElementById('ai-loading-text').textContent =
+                        `${completed} of ${total} comments ready`;
+
+                    if (start + batchSize < total) {
+                        await new Promise(resolve => setTimeout(resolve, 2200));
+                    }
                 }
-                const results = await res.json();
-                renderCards(results);
+
                 setAiUiState('preview');
+                progressFill.style.width = '100%';
+                progressText.textContent = `${total} of ${total} ready`;
             } catch (e) {
-                setAiUiState('error', 'Failed to generate report: ' + e.message);
+                setAiUiState('error', 'The batch could not continue: ' + e.message);
             }
         }
 

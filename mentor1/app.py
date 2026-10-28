@@ -981,11 +981,11 @@ def correct_student_text(text):
 
 
 
-def _build_ai_payload(student, show_grades=False):
+def _build_ai_payload(student, show_grades=False, faculty_context=None):
     """
     Compute facts in pure Python for one student.
-    show_grades must be passed from the main thread (not queried here)
-    to avoid SQLAlchemy thread-safety issues.
+    show_grades and faculty_context must be passed from the main thread
+    (they must not be queried here) to avoid SQLAlchemy thread-safety issues.
     Returns (payload_dict, corrections_list)
     """
     att_data = student.get_attendance()
@@ -1036,6 +1036,10 @@ def _build_ai_payload(student, show_grades=False):
     female_endings = ('a', 'i', 'ee', 'ya', 'na', 'ra', 'la', 'ita', 'ika', 'ika', 'eeka')
     gender = 'female' if any(lower_name.endswith(e) for e in female_endings) else 'male'
 
+    faculty_context = faculty_context or {}
+    global_advisory = (faculty_context.get('global_advisory') or '').strip()
+    individual_advisory = (student.custom_advisory or '').strip()
+
     payload = {
         'reg_no': student.reg_num,
         'name': name,
@@ -1046,6 +1050,8 @@ def _build_ai_payload(student, show_grades=False):
         'event': event,
         'online_course': online_course,
         'student_remark': remark,
+        'faculty_advisory': individual_advisory or global_advisory,
+        'faculty_observation': (faculty_context.get('global_observation') or '').strip(),
         'institution': 'SIMATS Engineering',
     }
 
@@ -1075,6 +1081,18 @@ def _call_model(payload):
             f"Acknowledge it briefly and sensitively in the comment — do NOT copy it word for word, "
             f"just mention that the student has explained the situation and encourage them going forward."
         )
+    advisory = (payload.get('faculty_advisory') or '').strip()
+    if advisory:
+        extra_parts.append(
+            f"The faculty has given this advisory to the student: '{advisory}'. "
+            "Reflect the guidance naturally without copying it verbatim or presenting it as a private student fact."
+        )
+    observation = (payload.get('faculty_observation') or '').strip()
+    if observation:
+        extra_parts.append(
+            f"Use this faculty-wide mentor observation as context: '{observation}'. "
+            "Include only the relevant guidance as a general, encouraging recommendation."
+        )
     extra = ("\n" + " ".join(extra_parts)) if extra_parts else ""
     prompt = f"Input: {json.dumps(payload, ensure_ascii=False)}{extra}"
 
@@ -1101,8 +1119,13 @@ def _call_model(payload):
             "was recorded and encourage one where appropriate.\n"
             "5. Weave provided grades naturally. Use only the supplied facts; do not invent subjects, percentages, "
             "achievements, course enrollment, or personal circumstances. Do not repeat private remarks verbatim.\n"
-            "6. Use a sincere mentor voice, vary sentence structure, and close with encouragement. Output no headings, "
-            "bullets, or quotation marks. Silently correct spelling and grammar.\n"
+            "6. Make every comment visibly individualized. Use the student's full name and build its emphasis around that "
+            "student's own combination of attendance, personal remark, faculty advisory, event, course, and grades. "
+            "Vary the opening, transitions, strongest positive point, and closing for each student. Do not reuse a "
+            "common template sentence or give the same student another student's meaning.\n"
+            "7. Lead with the most distinctive supplied fact and otherwise lead with the attendance pattern. Keep a sincere mentor "
+            "voice and close with a natural, specific encouragement tailored to this student. "
+            "Output no headings, bullets, or quotation marks. Silently correct spelling and grammar.\n"
             "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
         )
         resp = _chat_client.chat.completions.create(
@@ -1111,7 +1134,9 @@ def _call_model(payload):
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.7,
+            temperature=0.85,
+            presence_penalty=0.35,
+            frequency_penalty=0.25,
         )
         raw = resp.choices[0].message.content.strip()
     else:
@@ -1130,54 +1155,124 @@ def _call_model(payload):
 
 
 def fallback_comment(payload):
-    """Fixed template used when AI generation fails or is unavailable."""
+    """Generate a varied, deterministic template comment when AI is unavailable."""
     name = payload.get('name', 'The student')
     low = payload.get('low_subjects', [])
     event = payload.get('event', '')
     online = payload.get('online_course', '')
     remark = (payload.get('student_remark') or '').strip()
+    advisory = (payload.get('faculty_advisory') or '').strip()
+    observation = (payload.get('faculty_observation') or '').strip()
     gender_pronoun = 'she' if payload.get('gender') == 'female' else 'he'
     gender_pos = 'her' if payload.get('gender') == 'female' else 'his'
     first = name.split()[0]
 
+    seed_text = f"{payload.get('reg_no', '')}|{name}|{remark}|{event}|{online}|{advisory}|{observation}"
+    variant = sum(ord(char) for char in seed_text) % 4
+
     if low:
         att_str = ', '.join(f"{s['subject']} ({int(s['percent'])}%)" for s in low)
-        att_sentence = (f"{name} has recorded attendance below 80% in the following subject(s): "
-                        f"{att_str}. I encourage {first} to attend every upcoming class "
-                        f"to bring {gender_pos} attendance above 80%.")
+        attention = (
+            f"attendance in {att_str}" if len(low) == 1
+            else f"attendance in {att_str}"
+        )
+        attendance_variants = [
+            f"{name}'s attendance needs attention, particularly {attention}.",
+            f"A key area to improve for {name} is {attention}.",
+            f"The attendance record for {name} shows lower participation in {attention}.",
+            f"For {name}, the priority is to strengthen {attention}.",
+        ]
+        follow_up_variants = [
+            f"{first} should attend every upcoming class to bring {gender_pos} attendance above 80%.",
+            f"Regular attendance in the coming classes should help {first} improve this concern.",
+            f"I encourage {first} to stay consistent in class and steadily raise {gender_pos} attendance.",
+            f"A sustained effort from {first} to attend and participate should improve this area.",
+        ]
+        attendance_sentence = f"{attendance_variants[variant]} {follow_up_variants[variant]}"
     else:
-        att_sentence = (f"{name} has maintained consistent attendance across all subjects, "
-                        f"which reflects {gender_pos} commitment and dedication.")
+        attendance_variants = [
+            f"{name} has maintained consistent attendance across all subjects.",
+            f"Attendance remains steady throughout {name}'s subjects.",
+            f"A positive part of {name}'s progress is consistent attendance.",
+            f"{name} continues to demonstrate responsibility through regular attendance.",
+        ]
+        attendance_sentence = attendance_variants[variant]
 
     remark_sentence = ''
     if remark:
-        remark_sentence = (f" I have noted {first}'s personal explanation regarding this, "
-                           f"and I appreciate {gender_pos} transparency. "
-                           f"I encourage {first} to manage {gender_pos} responsibilities proactively going forward.")
+        remark_variants = [
+            f"I appreciate {first}'s transparency in sharing {gender_pos} explanation, and I encourage {gender_pos} continued effort.",
+            f"The personal explanation shared by {first} is understood, with appreciation for {gender_pos} honesty.",
+            f"I value {first}'s willingness to explain the situation and encourage thoughtful planning going forward.",
+            f"The explanation provided by {first} adds useful context, and {gender_pos} sincerity is appreciated.",
+        ]
+        remark_sentence = f" {remark_variants[variant]}"
 
-    event_sentence = ''
+    faculty_sentences = []
+    if advisory:
+        faculty_sentences.append(
+            f"The faculty guidance for {first} is to naturally and consistently apply this direction: {advisory}"
+        )
+    if observation:
+        faculty_sentences.append(
+            f"The broader mentor observation also encourages {first} to {observation[0].lower() + observation[1:]}"
+        )
+    faculty_sentence = ' '.join(f" {text}{'' if text.endswith(('.', '!', '?')) else '.'}" for text in faculty_sentences)
+
+    event_variants = [
+        f"{first} took part in {event}, a meaningful achievement worth appreciating.",
+        f"Participation in {event} is an encouraging achievement for {first}.",
+        f"I commend {first} for engaging in {event}.",
+        f"An encouraging highlight for {first} is the participation in {event}.",
+    ]
     if event:
-        event_sentence = f" {first} participated in {event}, which is highly appreciable."
+        event_sentence = f" {event_variants[variant]}"
     else:
-        event_sentence = (f" I encourage {first} to participate in upcoming hackathons, "
-                          f"symposiums, or workshops to further develop {gender_pos} skills.")
+        growth_variants = [
+            f"I encourage {first} to explore a suitable hackathon, symposium, or workshop.",
+            f"A future opportunity in a hackathon or symposium could further broaden {gender_pos} experience.",
+            f"Seeking participation in a symposium or technical event would support {gender_pos} growth.",
+            f"{first} is encouraged to identify an upcoming hackathon or workshop that matches {gender_pos} interests.",
+        ]
+        event_sentence = f" {growth_variants[variant]}"
 
     course_sentence = ''
     if online:
-        course_sentence = (f" {first} is also pursuing an online course in {online}, "
-                           f"which shows {gender_pos} eagerness to learn beyond the classroom.")
+        course_variants = [
+            f"The online course in {online} also reflects {gender_pos} eagerness to learn beyond the classroom.",
+            f"Through {online}, {first} is showing initiative in extending learning beyond regular classes.",
+            f"Pursuing {online} as an online course demonstrates a positive interest in independent learning.",
+            f"The additional learning in {online} is a promising step toward stronger technical growth.",
+        ]
+        course_sentence = f" {course_variants[variant]}"
 
-    # Include grades sentence when grades are in payload
     grades_sentence = ''
     if payload.get('grades'):
         grades_list = ', '.join(f"{g['subject']} ({g['grade']})" for g in payload['grades'])
-        grades_sentence = f" {first} has achieved the following grades: {grades_list}."
+        grade_variants = [
+            f"The recorded academic results in {grades_list} provide a useful foundation for continued progress.",
+            f"I encourage {first} to build steadily on the results of {grades_list}.",
+            f"The grades in {grades_list} offer clear strengths to preserve and areas to develop.",
+            f"With focused revision, {first} can improve further on the progress shown in {grades_list}.",
+        ]
+        grades_sentence = f" {grade_variants[variant]}"
 
-    closing = (f" Keep it up, {first}! "
-               f"I believe in {gender_pos} potential and look forward to seeing "
-               f"{gender_pronoun} achieve great success.")
+    closing_variants = [
+        f"Keep up the effort, {first}! I believe in {gender_pos} potential and look forward to {gender_pos} progress.",
+        f"Stay focused and confident, {first}; {name}'s steady effort can lead to meaningful success.",
+        f"Continue this journey with purpose, {first}, and use every opportunity to strengthen {gender_pos} growth.",
+        f"I wish {first} continued confidence and consistency as {gender_pronoun} works toward {gender_pos} goals.",
+    ]
 
-    return f"{att_sentence}{remark_sentence}{event_sentence}{course_sentence}{grades_sentence}{closing}".strip()
+    return ' '.join(part.strip() for part in (
+        attendance_sentence,
+        remark_sentence,
+        faculty_sentence,
+        event_sentence,
+        course_sentence,
+        grades_sentence,
+        closing_variants[variant],
+    ) if part.strip()).strip()
 
 
 def _validate_ai_comment(comment, payload):
@@ -1202,9 +1297,13 @@ def _rate_limit_retry_delay(error):
     return float(match.group(1)) if match else None
 
 
-def _generate_for_one(student, show_grades=False):
+def _generate_for_one(student, show_grades=False, faculty_context=None):
     """Generate comment for a single student. Returns result dict."""
-    payload, corrections = _build_ai_payload(student, show_grades=show_grades)
+    payload, corrections = _build_ai_payload(
+        student,
+        show_grades=show_grades,
+        faculty_context=faculty_context,
+    )
 
     comment = None
     ai_generated = False
@@ -1298,13 +1397,23 @@ def generate_comment_report():
     except Exception:
         show_grades = False
 
+    global_advisory = GlobalAdvisory.query.first()
+    global_observation = GlobalMentorObservation.query.first()
+    faculty_context = {
+        'global_advisory': global_advisory.content if global_advisory else '',
+        'global_observation': global_observation.content if global_observation else '',
+    }
+
     results = []
     # Keep Gemini calls sequential; OpenAI-compatible providers can use a small parallel batch.
-    BATCH = 5
+    BATCH = 3
     # Serialize Gemini requests to avoid exceeding low free-tier per-minute quotas.
     max_workers = 1 if PROVIDER == "gemini" else BATCH
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_generate_for_one, s, show_grades): s for s in students}
+        futures = {
+            executor.submit(_generate_for_one, s, show_grades, faculty_context): s
+            for s in students
+        }
         for future in as_completed(futures):
             try:
                 results.append(future.result())
@@ -1312,7 +1421,11 @@ def generate_comment_report():
                 s = futures[future]
                 print(f"[AI Report] Exception for {s.reg_num}: {e}")
                 # Fallback even on executor crash
-                payload, corrections = _build_ai_payload(s, show_grades=show_grades)
+                payload, corrections = _build_ai_payload(
+                    s,
+                    show_grades=show_grades,
+                    faculty_context=faculty_context,
+                )
                 results.append({
                     'reg_no': s.reg_num,
                     'name': payload['name'],
