@@ -39,10 +39,12 @@ _GEMINI_SYSTEM_INSTRUCTION = (
     "B.Tech skill recommendation verbatim when present. Write 300 to 800 words across readable paragraphs, "
     "aiming for about 450 words when the supplied record supports it. Use the extra space for practical, relevant "
     "guidance and encouragement rather than invented student history. "
+    "Include a brief, positive classroom-engagement encouragement for every student, phrased as helpful habits "
+    "to practise rather than claims about observed behavior. "
     "Write in the mentor's own warm, professional voice; never identify text as 'faculty guidance' or "
     "'mentor observation'. Keep the tone positive, including any below-80% attendance guidance. "
-    "Use only supplied facts. Do not claim classroom behavior, academic strengths, achievements, personal traits, "
-    "or family circumstances unless they are explicitly recorded. Phrase general study advice as suggestions, not "
+    "Use only supplied facts. Do not present classroom behavior, academic strengths, achievements, personal traits, "
+    "or family circumstances as observed unless explicitly recorded. Phrase general study advice as suggestions, not "
     "as things the student already does. Never invent grades, attendance, risks, or actions. "
     "Do not infer attendance, event/course participation, or gender when data is missing. Do not copy private remarks verbatim. "
     "Write readable paragraphs without headings or bullets and return only a JSON object with "
@@ -1253,8 +1255,8 @@ def _call_model(payload):
             "academic or activity highlights before attendance; place attendance information around the middle of the "
             "paragraph. Write 300 to 800 words across readable paragraphs, aiming for about 450 words when the "
             "student's record supports it. Use the extra length for practical study guidance, branch-relevant learning "
-            "suggestions, and supportive encouragement grounded in the student's actual record; target about 400 "
-            "words to leave room for required details. Do not repeat points just to fill space or invent facts.\n"
+            "suggestions, and supportive encouragement grounded in the student's actual record. Aim for about 450 "
+            "words while staying within 300 to 800 words; do not repeat points just to fill space or invent facts.\n"
             "Rules:\n"
             "1. Mention attendance ONLY for subjects below 80%, using their exact subject names and percentages from "
             "low_subjects. Never mention or list any subject at or above 80%, and do not state a high attendance "
@@ -1269,7 +1271,9 @@ def _call_model(payload):
             "invent course participation when the field is blank.\n"
             "5. Weave provided grades naturally. Use only supplied facts; do not invent classroom behavior, "
             "academic strengths, achievements, subjects, percentages, course enrollment, gender, or personal "
-            "circumstances. Phrase general study advice as suggestions, not claims about what the student already does. "
+            "circumstances. Include a brief, positive classroom-engagement encouragement for every student, "
+            "phrased as helpful habits to practise rather than claims about observed behavior. "
+            "Phrase general study advice as suggestions, not claims about what the student already does. "
             "Do not repeat private remarks verbatim.\n"
             "6. Include the provided branch-relevant B.Tech skill/course recommendation verbatim as a suggestion, "
             "not as a claim of enrollment. If no recommendation is supplied, do not invent one.\n"
@@ -1391,6 +1395,11 @@ def fallback_comment(payload):
     if skill_suggestion:
         parts.append(skill_suggestion)
 
+    parts.append(
+        f"A positive classroom routine can support {first}'s learning: listening attentively, "
+        "participating respectfully, and asking questions whenever a topic needs clarification."
+    )
+
     if len(parts) == 2:
         parts.append("No additional student-specific details were available for this comment.")
 
@@ -1414,6 +1423,18 @@ def _ensure_parent_cooperation_note(comment, payload):
     if note and 'encouragement and cooperation of the parents/guardians' not in comment.lower():
         return f"{comment.rstrip()} {note}"
     return comment
+
+
+def _ensure_classroom_engagement_note(comment, payload):
+    name_parts = (payload.get('name') or 'The student').strip().split()
+    first = name_parts[0] if name_parts else 'The student'
+    if 'a positive classroom routine can support' in comment.casefold():
+        return comment
+    note = (
+        f"A positive classroom routine can support {first}'s learning: listening attentively, "
+        "participating respectfully, and asking questions whenever a topic needs clarification."
+    )
+    return f"{comment.rstrip()} {note}"
 
 
 def _ensure_required_ai_details(comment, payload):
@@ -1598,6 +1619,7 @@ def _fallback_result_for_student(student, show_grades, faculty_context, skill_su
         comment = f"Dear Parent, {introduction}."
         if payload.get('low_subjects'):
             comment += f" {_parent_cooperation_note(payload)}"
+        comment = _ensure_classroom_engagement_note(comment, payload)
         comment = comment.strip()
 
     return {
@@ -1629,6 +1651,7 @@ def _generate_for_one(student, show_grades=False, faculty_context=None, skill_su
         try:
             comment = _call_model(payload)
             comment = _ensure_required_ai_details(comment, payload)
+            comment = _ensure_classroom_engagement_note(comment, payload)
             comment = _ensure_parent_cooperation_note(comment, payload)
             _validate_ai_comment(comment, payload)
             ai_generated = bool(comment)
