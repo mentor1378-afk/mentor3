@@ -181,7 +181,7 @@
                 <form action="/student" method="POST" enctype="multipart/form-data" class="space-y-8">
                     <div class="glass p-8">
                         <h3 class="text-sm font-bold text-white mb-6 uppercase tracking-wider">Other Details</h3>
-                        <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                             <div>
                                 <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Registered New
                                     Course</label>
@@ -247,6 +247,25 @@
                                     <input type="file" name="photo" id="profile-photo-input"
                                         class="premium-input text-xs">
                                 </div>
+                            </div>
+                        </div>
+
+                        <h3 class="text-sm font-bold text-white mt-8 mb-6 uppercase tracking-wider">Academic Details</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Current
+                                    Studying Year</label>
+                                <select name="studying_year" class="premium-input text-xs">
+                                    <option value="">Select year</option>
+                                    {% for year in ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'] %}
+                                    <option value="{{ year }}" {% if student.studying_year == year %}selected{% endif %}>{{ year }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Branch</label>
+                                <input type="text" name="branch" value="{{ student.branch or '' }}"
+                                    class="premium-input text-xs" placeholder="e.g. Computer Science">
                             </div>
                         </div>
 

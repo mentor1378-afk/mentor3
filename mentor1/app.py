@@ -5,7 +5,6 @@ import os
 import json
 import re
 import io
-import time
 import urllib.request
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,12 +26,17 @@ from pptx.oxml.xmlchemy import OxmlElement
 
 # --- Dynamic model selection -------------------------------------------------
 
+AI_REQUEST_TIMEOUT_SECONDS = 20
+
 _GEMINI_SYSTEM_INSTRUCTION = (
     "You are a caring, professional college mentor writing an individualized student progress comment. "
-    "Use the supplied reference style: begin with the student's name, describe attendance with exact subject "
-    "names and percentages, acknowledge stronger subjects when relevant, address event participation and "
-    "online-course status, and close with sincere encouragement. Use only supplied facts; never invent "
-    "achievements, grades, risks, family circumstances, or actions. Do not copy private remarks verbatim. "
+    "Follow the supplied parent-facing reference style: begin exactly with 'Dear Parent,'. In the next sentence, "
+    "introduce the student's progress by name and registration number. Describe positive academic or activity "
+    "highlights before discussing attendance; place any low-attendance concern around the middle of the paragraph "
+    "with exact subject names and percentages. Acknowledge stronger subjects when relevant, address event "
+    "participation and online-course status, and include the supplied branch-relevant B.Tech skill recommendation verbatim. "
+    "Use only supplied facts; never invent achievements, grades, risks, family circumstances, or actions. "
+    "Do not copy private remarks verbatim. "
     "Write one natural paragraph without headings or bullets and return only a JSON object with "
     '"reg_no" and "comment" fields.'
 )
@@ -97,7 +101,11 @@ elif PROVIDER in {"openai", "groq"}:
     if API_KEY:
         try:
             import openai
-            client_options = {"api_key": API_KEY}
+            client_options = {
+                "api_key": API_KEY,
+                "timeout": AI_REQUEST_TIMEOUT_SECONDS,
+                "max_retries": 0,
+            }
             if PROVIDER == "groq":
                 client_options["base_url"] = "https://api.groq.com/openai/v1"
             _chat_client = openai.OpenAI(**client_options)
@@ -175,6 +183,8 @@ class StudentDetail(db.Model):
     reg_num = db.Column(db.String(50), primary_key=True)
     name = db.Column(db.String(100))
     course = db.Column(db.String(100))
+    studying_year = db.Column(db.String(20))
+    branch = db.Column(db.String(100))
     # JSON strings for dynamic data
     slot_info = db.Column(db.Text, default='[]') # List of slot names
     attendance_data = db.Column(db.Text, default='{}') # {"Slot A": 81}
@@ -294,6 +304,8 @@ with app.app_context():
         add_column_if_missing('results_data', "TEXT DEFAULT '[]'")
         add_column_if_missing('custom_advisory', 'TEXT')
         add_column_if_missing('mentor_username', 'VARCHAR(50)')
+        add_column_if_missing('studying_year', 'VARCHAR(20)')
+        add_column_if_missing('branch', 'VARCHAR(100)')
     except Exception as e:
         db.session.rollback()
         print(f"Migration error: {e}")
@@ -388,6 +400,10 @@ def student_dashboard():
             student.attendance_data = json.dumps(att_data)
             student.marks_data = json.dumps(marks_data)
 
+            if 'studying_year' in request.form:
+                student.studying_year = (request.form.get('studying_year') or '').strip()
+            if 'branch' in request.form:
+                student.branch = (request.form.get('branch') or '').strip()
             student.registered_new_course = (request.form.get('registered_new_course') or '').strip()
             student.online_course = (request.form.get('online_course') or '').strip()
             student.event_participation = (request.form.get('event_participation') or '').strip()
@@ -981,7 +997,120 @@ def correct_student_text(text):
 
 
 
-def _build_ai_payload(student, show_grades=False, faculty_context=None):
+def _branch_skill_topics(branch):
+    """Return a B.Tech discipline label and skill topics appropriate to a branch."""
+    normalized = re.sub(r'[^a-z0-9]+', ' ', (branch or '').lower()).strip()
+    words = set(normalized.split())
+    branch_options = [
+        (
+            'computer science',
+            {'computer science', 'cse', 'information technology', 'it', 'artificial intelligence',
+             'ai', 'cs', 'machine learning', 'data science', 'cyber security', 'cybersecurity',
+             'software', 'computer engineering'},
+            ('Python', 'data structures and algorithms', 'full-stack web development', 'SQL and database design',
+             'cloud and DevOps', 'cybersecurity fundamentals', 'machine learning', 'data visualization',
+             'mobile app development', 'generative AI applications', 'Linux and networking', 'software testing',
+             'computer vision', 'distributed systems', 'API development', 'version control and collaboration'),
+        ),
+        (
+            'electronics and communication',
+            {'electronics', 'ece', 'communication', 'vlsi', 'embedded systems', 'instrumentation'},
+            ('embedded C', 'Internet of Things', 'Verilog and FPGA design', 'PCB design',
+             'digital signal processing', 'RF and wireless communication', 'microcontrollers', 'robotics',
+             'edge AI', 'communication networks', 'sensor interfacing', 'MATLAB and Simulink',
+             'Linux device drivers', 'antenna design', 'electronics testing', 'low-power circuit design'),
+        ),
+        (
+            'electrical engineering',
+            {'electrical', 'eee', 'power engineering'},
+            ('power systems analysis', 'PLC and SCADA', 'power electronics', 'renewable energy systems',
+             'embedded systems', 'electrical CAD', 'smart-grid technology', 'electric vehicle systems',
+             'MATLAB and Simulink', 'electrical protection and relays', 'motor drives', 'energy auditing',
+             'industrial automation', 'battery management systems', 'control systems', 'high-voltage engineering'),
+        ),
+        (
+            'mechanical engineering',
+            {'mechanical', 'mechatronics', 'automobile', 'automotive', 'manufacturing'},
+            ('3D CAD and parametric modelling', 'finite element analysis', 'computational fluid dynamics',
+             'robotics and automation', 'additive manufacturing', 'electric vehicle systems',
+             'computer-aided manufacturing', 'industrial IoT', 'materials selection', 'PLC programming',
+             'thermal-system simulation', 'product design', 'quality engineering', 'sustainable manufacturing',
+             'mechanism design', 'digital twins'),
+        ),
+        (
+            'civil engineering',
+            {'civil', 'construction', 'structural', 'geotechnical'},
+            ('Building Information Modelling', 'AutoCAD and technical drafting', 'structural analysis',
+             'Geographic Information Systems', 'land surveying and GIS', 'construction project scheduling',
+             'geotechnical investigation', 'sustainable construction materials', 'hydrology modelling',
+             'quantity surveying', 'reinforced-concrete design', 'transportation planning',
+             'construction safety', 'environmental impact assessment', 'drone-based site mapping',
+             'infrastructure asset management'),
+        ),
+        (
+            'chemical engineering',
+            {'chemical', 'polymer', 'petroleum'},
+            ('process simulation', 'process safety engineering', 'MATLAB for process calculations',
+             'industrial instrumentation', 'process control', 'energy-efficient plant design',
+             'chemical data analysis', 'reaction engineering', 'process optimization',
+             'environmental process engineering', 'plant layout design', 'materials characterization',
+             'quality management', 'industrial automation', 'wastewater treatment', 'renewable fuels'),
+        ),
+        (
+            'biotechnology',
+            {'biotechnology', 'biotech', 'biomedical', 'bioinformatics', 'life science'},
+            ('bioinformatics', 'Python for biological data', 'R for genomics', 'molecular diagnostics',
+             'bioprocess engineering', 'laboratory quality systems', 'computational biology',
+             'genome data analysis', 'biostatistics', 'tissue engineering', 'biomedical instrumentation',
+             'cell-culture techniques', 'drug discovery informatics', 'protein structure analysis',
+             'medical image analysis', 'biological database tools'),
+        ),
+    ]
+
+    for label, aliases, topics in branch_options:
+        if label == 'electronics and communication' and (
+            'electrical' in words or 'eee' in words or 'power engineering' in normalized
+        ):
+            continue
+        if any(alias in normalized if ' ' in alias else alias in words for alias in aliases):
+            return label, topics
+
+    return (
+        'engineering',
+        ('Python programming', 'data analysis', 'CAD fundamentals', 'IoT prototyping',
+         'project management', 'technical communication', 'cloud fundamentals', 'robotics basics',
+         '3D modelling', 'MATLAB fundamentals', 'automation basics', 'cybersecurity fundamentals',
+         'sustainable engineering', 'quality engineering', 'data visualization', 'rapid prototyping'),
+    )
+
+
+def _assign_skill_suggestions(students):
+    """Assign a distinct, branch-specific recommendation to each student in this report."""
+    groups = {}
+    for student in students:
+        branch = (student.branch or '').strip()
+        label, topics = _branch_skill_topics(branch)
+        groups.setdefault((label, topics), []).append(student)
+
+    suggestions = {}
+    for (label, topics), group in groups.items():
+        pairs = [
+            (topics[left], topics[right])
+            for left in range(len(topics))
+            for right in range(left + 1, len(topics))
+        ]
+        group.sort(key=lambda student: student.reg_num)
+        start = sum(ord(char) for char in (group[0].reg_num if group else '')) % len(pairs)
+        for index, student in enumerate(group):
+            first_topic, second_topic = pairs[(start + index) % len(pairs)]
+            suggestions[student.reg_num] = (
+                f"For {label} B.Tech learning, consider an online course in {first_topic} and "
+                f"{second_topic}, then apply them in a small hands-on project."
+            )
+    return suggestions
+
+
+def _build_ai_payload(student, show_grades=False, faculty_context=None, skill_suggestion=''):
     """
     Compute facts in pure Python for one student.
     show_grades and faculty_context must be passed from the main thread
@@ -1049,6 +1178,8 @@ def _build_ai_payload(student, show_grades=False, faculty_context=None):
         'other_slots_good': other_slots_good,
         'event': event,
         'online_course': online_course,
+        'branch': (student.branch or '').strip(),
+        'skill_suggestion': skill_suggestion,
         'student_remark': remark,
         'faculty_advisory': individual_advisory or global_advisory,
         'faculty_observation': (faculty_context.get('global_observation') or '').strip(),
@@ -1087,6 +1218,12 @@ def _call_model(payload):
             f"The faculty has given this advisory to the student: '{advisory}'. "
             "Reflect the guidance naturally without copying it verbatim or presenting it as a private student fact."
         )
+    skill_suggestion = (payload.get('skill_suggestion') or '').strip()
+    if skill_suggestion:
+        extra_parts.append(
+            "Include this branch-relevant B.Tech skill/course recommendation verbatim as advice; do not imply "
+            f"the student is already enrolled: {skill_suggestion}"
+        )
     observation = (payload.get('faculty_observation') or '').strip()
     if observation:
         extra_parts.append(
@@ -1098,20 +1235,25 @@ def _call_model(payload):
 
     # ---- Dispatch ---------------------------------------------------------------
     if PROVIDER == "gemini":
-        response = _gemini_model.generate_content(prompt)
+        response = _gemini_model.generate_content(
+            prompt,
+            request_options={"timeout": AI_REQUEST_TIMEOUT_SECONDS, "retry": None},
+        )
         raw = response.text.strip()
     elif PROVIDER in {"openai", "groq"}:
         system_msg = (
             "You are a college mentor personally writing a short comment about one student for the semester mentor report. "
-            "Follow this reference style: start with the student's name; state attendance accurately with subject names "
-            "and percentages; recognize subjects with stronger attendance when relevant; describe any recorded event "
-            "participation accurately; mention online-course status when provided; and end with specific, warm "
-            "encouragement. Write one natural, personal paragraph of about 90 to 150 words.\n"
+            "Follow the supplied parent-facing reference style. Begin exactly with 'Dear Parent,'. In the next sentence, "
+            "introduce the student's progress using the student's full name and registration number. Put positive "
+            "academic or activity highlights before attendance; place attendance information around the middle of the "
+            "paragraph. Write one natural, personal paragraph of about 90 to 150 words.\n"
             "Rules:\n"
             "1. Mention low attendance only for subjects below 80%, with exact subject names and percentages. "
             "If multiple subjects are low, identify each and recommend attending upcoming classes. Do not claim "
-            "detention risk, parent meetings, or other consequences unless explicitly provided.\n"
-            "2. If there are no low-attendance subjects, say attendance is consistent; if some subjects are good, "
+            "detention risk or consequences. A parent/guardian cooperation sentence will be added at the end "
+            "after generation when attendance is below 80%; do not add one yourself.\n"
+            "2. Include the student's name and registration number in the introduction. If there are no low-attendance "
+            "subjects, say attendance is consistent; if some subjects are good, "
             "acknowledge them without implying that all are good.\n"
             "3. If event details are supplied, describe only the recorded participation or achievement. If none are "
             "supplied, say no event participation was recorded and encourage a suitable future opportunity.\n"
@@ -1119,12 +1261,15 @@ def _call_model(payload):
             "was recorded and encourage one where appropriate.\n"
             "5. Weave provided grades naturally. Use only the supplied facts; do not invent subjects, percentages, "
             "achievements, course enrollment, or personal circumstances. Do not repeat private remarks verbatim.\n"
-            "6. Make every comment visibly individualized. Use the student's full name and build its emphasis around that "
+            "6. Include the provided branch-relevant B.Tech skill/course recommendation verbatim as a suggestion, "
+            "not as a claim of enrollment. Recommendations are assigned to differ among students in the same report.\n"
+            "7. Make every comment visibly individualized. Use the student's full name and build its emphasis around that "
             "student's own combination of attendance, personal remark, faculty advisory, event, course, and grades. "
             "Vary the opening, transitions, strongest positive point, and closing for each student. Do not reuse a "
             "common template sentence or give the same student another student's meaning.\n"
-            "7. Lead with the most distinctive supplied fact and otherwise lead with the attendance pattern. Keep a sincere mentor "
-            "voice and close with a natural, specific encouragement tailored to this student. "
+            "8. After 'Dear Parent,' introduce the student's progress, then share positive details, attendance "
+            "information, and relevant guidance in that order. Close with sincere, specific encouragement tailored "
+            "to this student. "
             "Output no headings, bullets, or quotation marks. Silently correct spelling and grammar.\n"
             "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
         )
@@ -1137,6 +1282,7 @@ def _call_model(payload):
             temperature=0.85,
             presence_penalty=0.35,
             frequency_penalty=0.25,
+            timeout=AI_REQUEST_TIMEOUT_SECONDS,
         )
         raw = resp.choices[0].message.content.strip()
     else:
@@ -1157,9 +1303,11 @@ def _call_model(payload):
 def fallback_comment(payload):
     """Generate a varied, deterministic template comment when AI is unavailable."""
     name = payload.get('name', 'The student')
+    reg_no = payload.get('reg_no', '')
     low = payload.get('low_subjects', [])
     event = payload.get('event', '')
     online = payload.get('online_course', '')
+    skill_suggestion = (payload.get('skill_suggestion') or '').strip()
     remark = (payload.get('student_remark') or '').strip()
     advisory = (payload.get('faculty_advisory') or '').strip()
     observation = (payload.get('faculty_observation') or '').strip()
@@ -1172,15 +1320,11 @@ def fallback_comment(payload):
 
     if low:
         att_str = ', '.join(f"{s['subject']} ({int(s['percent'])}%)" for s in low)
-        attention = (
-            f"attendance in {att_str}" if len(low) == 1
-            else f"attendance in {att_str}"
-        )
         attendance_variants = [
-            f"{name}'s attendance needs attention, particularly {attention}.",
-            f"A key area to improve for {name} is {attention}.",
-            f"The attendance record for {name} shows lower participation in {attention}.",
-            f"For {name}, the priority is to strengthen {attention}.",
+            f"{name}'s attendance needs attention, particularly in {att_str}.",
+            f"A key area to improve for {name} is attendance, particularly in {att_str}.",
+            f"The attendance record for {name} shows lower attendance in {att_str}.",
+            f"For {name}, the priority is to improve attendance in {att_str}.",
         ]
         follow_up_variants = [
             f"{first} should attend every upcoming class to bring {gender_pos} attendance above 80%.",
@@ -1264,20 +1408,54 @@ def fallback_comment(payload):
         f"I wish {first} continued confidence and consistency as {gender_pronoun} works toward {gender_pos} goals.",
     ]
 
+    introduction = f"It is a pleasure to share the progress of {name}"
+    if reg_no:
+        introduction += f" (Reg. No. {reg_no})"
+    introduction += "."
+
     return ' '.join(part.strip() for part in (
-        attendance_sentence,
-        remark_sentence,
-        faculty_sentence,
+        "Dear Parent,",
+        introduction,
         event_sentence,
         course_sentence,
         grades_sentence,
+        attendance_sentence,
+        remark_sentence,
+        faculty_sentence,
+        skill_suggestion,
         closing_variants[variant],
+        _parent_cooperation_note(payload),
     ) if part.strip()).strip()
+
+
+def _parent_cooperation_note(payload):
+    if not payload.get('low_subjects'):
+        return ''
+    first = (payload.get('name') or 'The student').split()[0]
+    return (
+        f"The cooperation of the parents/guardians is also requested to support {first} "
+        "in improving attendance."
+    )
+
+
+def _ensure_parent_cooperation_note(comment, payload):
+    note = _parent_cooperation_note(payload)
+    if note and 'cooperation of the parents/guardians' not in comment.lower():
+        return f"{comment.rstrip()} {note}"
+    return comment
 
 
 def _validate_ai_comment(comment, payload):
     if not comment:
         raise ValueError("The AI provider returned an empty comment.")
+    if not comment.lstrip().lower().startswith("dear parent,"):
+        raise ValueError("The AI comment did not use the required parent-facing opening.")
+    name = (payload.get('name') or '').strip()
+    if name and name.lower() not in comment.lower():
+        raise ValueError("The AI comment did not identify the student.")
+    reg_no = (payload.get('reg_no') or '').strip()
+    if reg_no and reg_no.lower() not in comment.lower():
+        raise ValueError("The AI comment did not include the registration number.")
     for subject in payload.get('low_subjects', []):
         name = subject.get('subject', '')
         percent = subject.get('percent', -1)
@@ -1285,6 +1463,9 @@ def _validate_ai_comment(comment, payload):
             raise ValueError(f"Comment missing subject: {name}")
         if percent >= 0 and str(int(percent)) not in comment:
             raise ValueError(f"Comment missing percentage for: {name}")
+    skill_suggestion = (payload.get('skill_suggestion') or '').strip()
+    if skill_suggestion and skill_suggestion.lower() not in comment.lower():
+        raise ValueError("Comment omitted the assigned branch-specific skill recommendation.")
 
 
 def _is_rate_limit_error(error):
@@ -1292,17 +1473,64 @@ def _is_rate_limit_error(error):
     return '429' in message or 'quota' in message or 'rate limit' in message
 
 
-def _rate_limit_retry_delay(error):
-    match = re.search(r'please retry in\s+([0-9]+(?:\.[0-9]+)?)\s*seconds?', str(error), re.IGNORECASE)
-    return float(match.group(1)) if match else None
+def _fallback_result_for_student(student, show_grades, faculty_context, skill_suggestion, error):
+    """Create one template result even if AI generation or payload preparation fails."""
+    reg_no = getattr(student, 'reg_num', '') or ''
+    try:
+        payload, corrections = _build_ai_payload(
+            student,
+            show_grades=show_grades,
+            faculty_context=faculty_context,
+            skill_suggestion=skill_suggestion,
+        )
+    except Exception as payload_error:
+        print(f"[AI Report] Could not prepare fallback data for {reg_no}: {payload_error}")
+        payload = {
+            'reg_no': reg_no,
+            'name': str(getattr(student, 'name', None) or 'The student'),
+            'gender': 'male',
+            'low_subjects': [],
+            'event': '',
+            'online_course': '',
+            'skill_suggestion': skill_suggestion,
+        }
+        corrections = []
+
+    try:
+        comment = _ensure_parent_cooperation_note(fallback_comment(payload), payload)
+    except Exception as fallback_error:
+        print(f"[AI Report] Template fallback failed for {reg_no}: {fallback_error}")
+        name = str(payload.get('name') or 'The student')
+        reg_no = payload.get('reg_no') or ''
+        introduction = f"It is a pleasure to share the progress of {name}"
+        if reg_no:
+            introduction += f" (Reg. No. {reg_no})"
+        comment = f"Dear Parent, {introduction}. {name} is encouraged to continue developing useful engineering skills. "
+        comment += (payload.get('skill_suggestion') or '').strip()
+        if payload.get('low_subjects'):
+            comment += f" {_parent_cooperation_note(payload)}"
+        comment = comment.strip()
+
+    return {
+        'reg_no': reg_no,
+        'name': payload['name'],
+        'comment': comment,
+        'ai_generated': False,
+        'ai_warning': error,
+        'corrections': corrections,
+        'gender': payload['gender'],
+        'low_count': len(payload['low_subjects']),
+        'has_event': bool(payload.get('event', '').strip()),
+    }
 
 
-def _generate_for_one(student, show_grades=False, faculty_context=None):
+def _generate_for_one(student, show_grades=False, faculty_context=None, skill_suggestion=''):
     """Generate comment for a single student. Returns result dict."""
     payload, corrections = _build_ai_payload(
         student,
         show_grades=show_grades,
         faculty_context=faculty_context,
+        skill_suggestion=skill_suggestion,
     )
 
     comment = None
@@ -1313,40 +1541,15 @@ def _generate_for_one(student, show_grades=False, faculty_context=None):
             comment = _call_model(payload)
             _validate_ai_comment(comment, payload)
             ai_generated = bool(comment)
-        except Exception as first_err:
-            print(f"[AI Report] First attempt failed for {student.reg_num}: {first_err}")
-            if _is_rate_limit_error(first_err):
-                retry_delay = _rate_limit_retry_delay(first_err)
-                if retry_delay is not None and retry_delay <= 5:
-                    time.sleep(retry_delay + 0.25)
-                    try:
-                        comment = _call_model(payload)
-                        _validate_ai_comment(comment, payload)
-                        ai_generated = bool(comment)
-                    except Exception as retry_err:
-                        print(f"[AI Report] Retry failed for {student.reg_num}: {retry_err}")
-                        comment = None
-                if not comment:
-                    ai_warning = (
-                        f"{PROVIDER.title()}'s request limit was reached; a template comment was used. "
-                        "Wait for the quota window to reset, then try again."
-                    )
+        except Exception as error:
+            print(f"[AI Report] Generation failed for {student.reg_num}: {error}")
+            if _is_rate_limit_error(error):
+                ai_warning = f"{PROVIDER.title()}'s request limit was reached; a template comment was used."
             else:
-                # Retry once for errors other than provider quota limits.
-                try:
-                    comment = _call_model(payload)
-                    _validate_ai_comment(comment, payload)
-                    ai_generated = bool(comment)
-                except Exception as retry_err:
-                    print(f"[AI Report] Retry failed for {student.reg_num}: {retry_err}")
-                    comment = None
-                    if _is_rate_limit_error(retry_err):
-                        ai_warning = (
-                            f"{PROVIDER.title()}'s request limit was reached; a template comment was used. "
-                            "Wait for the quota window to reset, then try again."
-                        )
-                    else:
-                        ai_warning = "AI generation failed; a template comment was used. Check the server logs and API configuration."
+                ai_warning = (
+                    f"AI generation failed or exceeded the {AI_REQUEST_TIMEOUT_SECONDS}-second limit; "
+                    "a template comment was used."
+                )
     else:
         ai_warning = f"{PROVIDER} is unavailable. Check the configured API key and server dependencies."
 
@@ -1355,6 +1558,7 @@ def _generate_for_one(student, show_grades=False, faculty_context=None):
             ai_warning = "AI returned no comment; a template comment was used. Check the server logs and API configuration."
         comment = fallback_comment(payload)
         ai_generated = False
+    comment = _ensure_parent_cooperation_note(comment, payload)
 
     return {
         'reg_no': student.reg_num,
@@ -1403,15 +1607,21 @@ def generate_comment_report():
         'global_advisory': global_advisory.content if global_advisory else '',
         'global_observation': global_observation.content if global_observation else '',
     }
+    skill_suggestions = _assign_skill_suggestions(students)
 
     results = []
-    # Keep Gemini calls sequential; OpenAI-compatible providers can use a small parallel batch.
+    # Process each UI batch concurrently so provider timeouts fit within one batch wait.
     BATCH = 3
-    # Serialize Gemini requests to avoid exceeding low free-tier per-minute quotas.
-    max_workers = 1 if PROVIDER == "gemini" else BATCH
+    max_workers = min(BATCH, len(students))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_generate_for_one, s, show_grades, faculty_context): s
+            executor.submit(
+                _generate_for_one,
+                s,
+                show_grades,
+                faculty_context,
+                skill_suggestions[s.reg_num],
+            ): s
             for s in students
         }
         for future in as_completed(futures):
@@ -1420,23 +1630,13 @@ def generate_comment_report():
             except Exception as e:
                 s = futures[future]
                 print(f"[AI Report] Exception for {s.reg_num}: {e}")
-                # Fallback even on executor crash
-                payload, corrections = _build_ai_payload(
+                results.append(_fallback_result_for_student(
                     s,
-                    show_grades=show_grades,
-                    faculty_context=faculty_context,
-                )
-                results.append({
-                    'reg_no': s.reg_num,
-                    'name': payload['name'],
-                    'comment': fallback_comment(payload),
-                    'ai_generated': False,
-                    'ai_warning': "AI generation failed; a template comment was used. Check the server logs.",
-                    'corrections': corrections,
-                    'gender': payload['gender'],
-                    'low_count': len(payload['low_subjects']),
-                    'has_event': bool(payload.get('event', '').strip()),
-                })
+                    show_grades,
+                    faculty_context,
+                    skill_suggestions.get(s.reg_num, ''),
+                    "AI generation failed; a template comment was used. Check the server logs.",
+                ))
 
     # Sort by name for consistent ordering
     results.sort(key=lambda x: (x['name'] or '').lower())
