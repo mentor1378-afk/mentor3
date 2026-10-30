@@ -500,6 +500,10 @@ def edit_student_faculty(reg_num):
     if student:
         student.name = request.form.get('name', student.name) or student.name
         student.course = request.form.get('course', student.course) or student.course
+        if 'studying_year' in request.form:
+            student.studying_year = (request.form.get('studying_year') or '').strip()
+        if 'branch' in request.form:
+            student.branch = (request.form.get('branch') or '').strip()
         student.registered_new_course = request.form.get('registered_new_course', student.registered_new_course or '')
         student.online_course = request.form.get('online_course', student.online_course or '')
         student.event_participation = request.form.get('event_participation', student.event_participation or '')
@@ -586,6 +590,8 @@ def faculty_dashboard():
             'reg_num': s.reg_num,
             'name': s.name,
             'course': s.course,
+            'studying_year': s.studying_year,
+            'branch': s.branch,
             'attendance_data': s.attendance_data,
             'marks_data': s.marks_data,
             'slot_info': s.slot_info,

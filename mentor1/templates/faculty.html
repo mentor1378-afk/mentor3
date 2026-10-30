@@ -152,6 +152,21 @@
                                     class="premium-input bg-[#0d1117]">
                             </div>
                             <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Studying Year</label>
+                                <select name="studying_year" id="edit-modal-studying-year"
+                                    class="premium-input bg-[#0d1117]">
+                                    <option value="">Select year</option>
+                                    {% for year in ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'] %}
+                                    <option value="{{ year }}">{{ year }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Branch</label>
+                                <input type="text" name="branch" id="edit-modal-branch"
+                                    class="premium-input bg-[#0d1117]" placeholder="e.g. Computer Science">
+                            </div>
+                            <div>
                                 <label class="block text-[10px] font-bold text-gray-500 uppercase mb-2">Registered New
                                     Course</label>
                                 <input type="text" name="registered_new_course" id="edit-modal-new-course"
@@ -902,6 +917,8 @@
 
             document.getElementById('edit-modal-name').value = s.name || '';
             document.getElementById('edit-modal-course').value = s.course || '';
+            document.getElementById('edit-modal-studying-year').value = s.studying_year || '';
+            document.getElementById('edit-modal-branch').value = s.branch || '';
             document.getElementById('edit-modal-new-course').value = s.registered_new_course || '';
             document.getElementById('edit-modal-online-course').value = s.online_course || '';
             document.getElementById('edit-modal-events').value = s.event_participation || '';
