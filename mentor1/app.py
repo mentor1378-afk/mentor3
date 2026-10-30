@@ -34,9 +34,10 @@ _GEMINI_SYSTEM_INSTRUCTION = (
     "introduce the student's progress by name and registration number. Describe positive academic or activity "
     "highlights before discussing attendance; place any low-attendance concern around the middle of the paragraph "
     "with exact subject names and percentages. Acknowledge stronger subjects when relevant, address event "
-    "participation and online-course status, and include the supplied branch-relevant B.Tech skill recommendation verbatim. "
+    "participation and online courses only when those details are recorded, and include the supplied branch-relevant "
+    "B.Tech skill recommendation verbatim when present. "
     "Use only supplied facts; never invent achievements, grades, risks, family circumstances, or actions. "
-    "Do not copy private remarks verbatim. "
+    "Do not infer attendance, event/course participation, or gender when data is missing. Do not copy private remarks verbatim. "
     "Write one natural paragraph without headings or bullets and return only a JSON object with "
     '"reg_no" and "comment" fields.'
 )
@@ -78,6 +79,7 @@ def _get_model_choice():
 
 PROVIDER, MODEL_NAME, API_KEY = _get_model_choice()
 AI_PROVIDER_AVAILABLE = False
+AI_PROVIDER_ERROR = None
 _gemini_model = None
 _chat_client = None
 
@@ -94,9 +96,11 @@ if PROVIDER == "gemini":
         except Exception as exc:
             print(f"[AI Report] Gemini not available: {exc}")
             AI_PROVIDER_AVAILABLE = False
+            AI_PROVIDER_ERROR = f"Gemini client initialization failed ({type(exc).__name__})."
             _gemini_model = None
     else:
         print("[AI Report] Gemini not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI comment generation.")
+        AI_PROVIDER_ERROR = "Gemini API key is not configured."
 elif PROVIDER in {"openai", "groq"}:
     if API_KEY:
         try:
@@ -113,12 +117,15 @@ elif PROVIDER in {"openai", "groq"}:
         except Exception as exc:
             print(f"[AI Report] {PROVIDER.title()} not available: {exc}")
             AI_PROVIDER_AVAILABLE = False
+            AI_PROVIDER_ERROR = f"{PROVIDER.title()} client initialization failed ({type(exc).__name__})."
             _chat_client = None
     else:
         api_key_name = "GROQ_API_KEY" if PROVIDER == "groq" else "OPENAI_API_KEY"
         print(f"[AI Report] {PROVIDER.title()} not configured. Set {api_key_name} to enable AI comment generation.")
+        AI_PROVIDER_ERROR = f"{PROVIDER.title()} API key is not configured."
 else:
     print(f"[AI Report] Unsupported provider: {PROVIDER}")
+    AI_PROVIDER_ERROR = f"Unsupported AI provider: {PROVIDER}."
 
 # --- Document generation libraries ------------------------------------------------
 try:
@@ -1075,13 +1082,7 @@ def _branch_skill_topics(branch):
         if any(alias in normalized if ' ' in alias else alias in words for alias in aliases):
             return label, topics
 
-    return (
-        'engineering',
-        ('Python programming', 'data analysis', 'CAD fundamentals', 'IoT prototyping',
-         'project management', 'technical communication', 'cloud fundamentals', 'robotics basics',
-         '3D modelling', 'MATLAB fundamentals', 'automation basics', 'cybersecurity fundamentals',
-         'sustainable engineering', 'quality engineering', 'data visualization', 'rapid prototyping'),
-    )
+    return '', ()
 
 
 def _assign_skill_suggestions(students):
@@ -1094,6 +1095,8 @@ def _assign_skill_suggestions(students):
 
     suggestions = {}
     for (label, topics), group in groups.items():
+        if not topics:
+            continue
         pairs = [
             (topics[left], topics[right])
             for left in range(len(topics))
@@ -1137,33 +1140,22 @@ def _build_ai_payload(student, show_grades=False, faculty_context=None, skill_su
     online_course = maybe_correct(student.online_course, 'Online Course')
     remark = maybe_correct(student.additional_description, 'Remark / Observation')
 
-    # --- Compute attendance facts ---
-    low_subjects = []      # below 80%
-    borderline_subjects = []  # exactly 80%
-    good_count = 0
+    # --- Compute attendance facts from valid recorded values only ---
+    attendance_records = []
 
     for slot, att_val in att_data.items():
         try:
             att_pct = float(str(att_val).replace('%', '').strip() or 0)
         except (ValueError, TypeError):
-            att_pct = 0
+            continue
+        if not 0 <= att_pct <= 100:
+            continue
 
-        # Get subject/course name for this slot from marks_data
         subject_name = marks_data.get(slot, {}).get('course', '') or slot
+        attendance_records.append({'subject': subject_name, 'percent': att_pct})
 
-        if att_pct < 80:
-            low_subjects.append({'subject': subject_name, 'percent': att_pct})
-        elif att_pct == 80:
-            borderline_subjects.append(subject_name)
-        else:
-            good_count += 1
-
-    other_slots_good = good_count > 0 and len(low_subjects) > 0
-
-    # Infer gender from name (simple heuristic for Indian names)
-    lower_name = (student.name or '').lower().split()[0] if student.name else ''
-    female_endings = ('a', 'i', 'ee', 'ya', 'na', 'ra', 'la', 'ita', 'ika', 'ika', 'eeka')
-    gender = 'female' if any(lower_name.endswith(e) for e in female_endings) else 'male'
+    low_subjects = [record for record in attendance_records if record['percent'] < 80]
+    other_slots_good = any(record['percent'] >= 80 for record in attendance_records) and bool(low_subjects)
 
     faculty_context = faculty_context or {}
     global_advisory = (faculty_context.get('global_advisory') or '').strip()
@@ -1172,9 +1164,9 @@ def _build_ai_payload(student, show_grades=False, faculty_context=None, skill_su
     payload = {
         'reg_no': student.reg_num,
         'name': name,
-        'gender': gender,
+        'gender': '',
+        'attendance_records': attendance_records,
         'low_subjects': low_subjects,
-        'borderline_subjects': borderline_subjects,
         'other_slots_good': other_slots_good,
         'event': event,
         'online_course': online_course,
@@ -1248,28 +1240,24 @@ def _call_model(payload):
             "academic or activity highlights before attendance; place attendance information around the middle of the "
             "paragraph. Write one natural, personal paragraph of about 90 to 150 words.\n"
             "Rules:\n"
-            "1. Mention low attendance only for subjects below 80%, with exact subject names and percentages. "
-            "If multiple subjects are low, identify each and recommend attending upcoming classes. Do not claim "
-            "detention risk or consequences. A parent/guardian cooperation sentence will be added at the end "
-            "after generation when attendance is below 80%; do not add one yourself.\n"
-            "2. Include the student's name and registration number in the introduction. If there are no low-attendance "
-            "subjects, say attendance is consistent; if some subjects are good, "
-            "acknowledge them without implying that all are good.\n"
-            "3. If event details are supplied, describe only the recorded participation or achievement. If none are "
-            "supplied, say no event participation was recorded and encourage a suitable future opportunity.\n"
-            "4. Mention online-course participation only when the supplied facts support it; if blank, say no course "
-            "was recorded and encourage one where appropriate.\n"
-            "5. Weave provided grades naturally. Use only the supplied facts; do not invent subjects, percentages, "
-            "achievements, course enrollment, or personal circumstances. Do not repeat private remarks verbatim.\n"
+            "1. Mention low attendance only for subjects below 80%, with exact subject names and percentages from "
+            "attendance_records. If multiple subjects are low, identify each. Do not claim detention risk or "
+            "consequences. A parent/guardian cooperation sentence will be added at the end when attendance is below "
+            "80%; do not add one yourself. If attendance_records is empty, do not make any attendance claim.\n"
+            "2. Include the student's name and registration number in the introduction. Never claim attendance is "
+            "consistent unless recorded percentages support that statement.\n"
+            "3. Mention event participation only when event details are supplied. Do not add a future event suggestion "
+            "when the event field is blank.\n"
+            "4. Mention an online course only when online_course is supplied. Do not say that a course is missing or "
+            "invent course participation when the field is blank.\n"
+            "5. Weave provided grades naturally. Use only supplied facts; do not invent subjects, percentages, "
+            "achievements, course enrollment, gender, or personal circumstances. Do not repeat private remarks verbatim.\n"
             "6. Include the provided branch-relevant B.Tech skill/course recommendation verbatim as a suggestion, "
-            "not as a claim of enrollment. Recommendations are assigned to differ among students in the same report.\n"
-            "7. Make every comment visibly individualized. Use the student's full name and build its emphasis around that "
-            "student's own combination of attendance, personal remark, faculty advisory, event, course, and grades. "
-            "Vary the opening, transitions, strongest positive point, and closing for each student. Do not reuse a "
-            "common template sentence or give the same student another student's meaning.\n"
-            "8. After 'Dear Parent,' introduce the student's progress, then share positive details, attendance "
-            "information, and relevant guidance in that order. Close with sincere, specific encouragement tailored "
-            "to this student. "
+            "not as a claim of enrollment. If no recommendation is supplied, do not invent one.\n"
+            "7. Make each comment specific to that student's supplied attendance, remark, faculty advisory, event, "
+            "course, and grades. Do not attribute one student's information to another.\n"
+            "8. After 'Dear Parent,' introduce the student's progress, then share recorded positive details, attendance "
+            "information if available, and relevant guidance in that order. Avoid generic praise unsupported by facts.\n"
             "Output no headings, bullets, or quotation marks. Silently correct spelling and grammar.\n"
             "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
         )
@@ -1301,131 +1289,85 @@ def _call_model(payload):
 
 
 def fallback_comment(payload):
-    """Generate a varied, deterministic template comment when AI is unavailable."""
-    name = payload.get('name', 'The student')
-    reg_no = payload.get('reg_no', '')
-    low = payload.get('low_subjects', [])
-    event = payload.get('event', '')
-    online = payload.get('online_course', '')
-    skill_suggestion = (payload.get('skill_suggestion') or '').strip()
-    remark = (payload.get('student_remark') or '').strip()
-    advisory = (payload.get('faculty_advisory') or '').strip()
-    observation = (payload.get('faculty_observation') or '').strip()
-    gender_pronoun = 'she' if payload.get('gender') == 'female' else 'he'
-    gender_pos = 'her' if payload.get('gender') == 'female' else 'his'
+    """Create a deterministic comment using recorded facts, without filling data gaps."""
+    name = (payload.get('name') or 'The student').strip()
+    reg_no = (payload.get('reg_no') or '').strip()
     first = name.split()[0]
-
-    seed_text = f"{payload.get('reg_no', '')}|{name}|{remark}|{event}|{online}|{advisory}|{observation}"
-    variant = sum(ord(char) for char in seed_text) % 4
-
-    if low:
-        att_str = ', '.join(f"{s['subject']} ({int(s['percent'])}%)" for s in low)
-        attendance_variants = [
-            f"{name}'s attendance needs attention, particularly in {att_str}.",
-            f"A key area to improve for {name} is attendance, particularly in {att_str}.",
-            f"The attendance record for {name} shows lower attendance in {att_str}.",
-            f"For {name}, the priority is to improve attendance in {att_str}.",
-        ]
-        follow_up_variants = [
-            f"{first} should attend every upcoming class to bring {gender_pos} attendance above 80%.",
-            f"Regular attendance in the coming classes should help {first} improve this concern.",
-            f"I encourage {first} to stay consistent in class and steadily raise {gender_pos} attendance.",
-            f"A sustained effort from {first} to attend and participate should improve this area.",
-        ]
-        attendance_sentence = f"{attendance_variants[variant]} {follow_up_variants[variant]}"
-    else:
-        attendance_variants = [
-            f"{name} has maintained consistent attendance across all subjects.",
-            f"Attendance remains steady throughout {name}'s subjects.",
-            f"A positive part of {name}'s progress is consistent attendance.",
-            f"{name} continues to demonstrate responsibility through regular attendance.",
-        ]
-        attendance_sentence = attendance_variants[variant]
-
-    remark_sentence = ''
-    if remark:
-        remark_variants = [
-            f"I appreciate {first}'s transparency in sharing {gender_pos} explanation, and I encourage {gender_pos} continued effort.",
-            f"The personal explanation shared by {first} is understood, with appreciation for {gender_pos} honesty.",
-            f"I value {first}'s willingness to explain the situation and encourage thoughtful planning going forward.",
-            f"The explanation provided by {first} adds useful context, and {gender_pos} sincerity is appreciated.",
-        ]
-        remark_sentence = f" {remark_variants[variant]}"
-
-    faculty_sentences = []
-    if advisory:
-        faculty_sentences.append(
-            f"The faculty guidance for {first} is to naturally and consistently apply this direction: {advisory}"
-        )
-    if observation:
-        faculty_sentences.append(
-            f"The broader mentor observation also encourages {first} to {observation[0].lower() + observation[1:]}"
-        )
-    faculty_sentence = ' '.join(f" {text}{'' if text.endswith(('.', '!', '?')) else '.'}" for text in faculty_sentences)
-
-    event_variants = [
-        f"{first} took part in {event}, a meaningful achievement worth appreciating.",
-        f"Participation in {event} is an encouraging achievement for {first}.",
-        f"I commend {first} for engaging in {event}.",
-        f"An encouraging highlight for {first} is the participation in {event}.",
-    ]
-    if event:
-        event_sentence = f" {event_variants[variant]}"
-    else:
-        growth_variants = [
-            f"I encourage {first} to explore a suitable hackathon, symposium, or workshop.",
-            f"A future opportunity in a hackathon or symposium could further broaden {gender_pos} experience.",
-            f"Seeking participation in a symposium or technical event would support {gender_pos} growth.",
-            f"{first} is encouraged to identify an upcoming hackathon or workshop that matches {gender_pos} interests.",
-        ]
-        event_sentence = f" {growth_variants[variant]}"
-
-    course_sentence = ''
-    if online:
-        course_variants = [
-            f"The online course in {online} also reflects {gender_pos} eagerness to learn beyond the classroom.",
-            f"Through {online}, {first} is showing initiative in extending learning beyond regular classes.",
-            f"Pursuing {online} as an online course demonstrates a positive interest in independent learning.",
-            f"The additional learning in {online} is a promising step toward stronger technical growth.",
-        ]
-        course_sentence = f" {course_variants[variant]}"
-
-    grades_sentence = ''
-    if payload.get('grades'):
-        grades_list = ', '.join(f"{g['subject']} ({g['grade']})" for g in payload['grades'])
-        grade_variants = [
-            f"The recorded academic results in {grades_list} provide a useful foundation for continued progress.",
-            f"I encourage {first} to build steadily on the results of {grades_list}.",
-            f"The grades in {grades_list} offer clear strengths to preserve and areas to develop.",
-            f"With focused revision, {first} can improve further on the progress shown in {grades_list}.",
-        ]
-        grades_sentence = f" {grade_variants[variant]}"
-
-    closing_variants = [
-        f"Keep up the effort, {first}! I believe in {gender_pos} potential and look forward to {gender_pos} progress.",
-        f"Stay focused and confident, {first}; {name}'s steady effort can lead to meaningful success.",
-        f"Continue this journey with purpose, {first}, and use every opportunity to strengthen {gender_pos} growth.",
-        f"I wish {first} continued confidence and consistency as {gender_pronoun} works toward {gender_pos} goals.",
-    ]
+    variant = sum(ord(char) for char in f"{reg_no}|{name}") % 2
+    parts = ["Dear Parent,"]
 
     introduction = f"It is a pleasure to share the progress of {name}"
     if reg_no:
         introduction += f" (Reg. No. {reg_no})"
-    introduction += "."
+    parts.append(f"{introduction}.")
 
-    return ' '.join(part.strip() for part in (
-        "Dear Parent,",
-        introduction,
-        event_sentence,
-        course_sentence,
-        grades_sentence,
-        attendance_sentence,
-        remark_sentence,
-        faculty_sentence,
-        skill_suggestion,
-        closing_variants[variant],
-        _parent_cooperation_note(payload),
-    ) if part.strip()).strip()
+    event = (payload.get('event') or '').strip()
+    if event:
+        event_phrases = [
+            f"The recorded event participation for {first} is {event}.",
+            f"{first}'s recorded event participation includes {event}.",
+        ]
+        parts.append(event_phrases[variant])
+
+    online_course = (payload.get('online_course') or '').strip()
+    if online_course:
+        course_phrases = [
+            f"The online course recorded for {first} is {online_course}.",
+            f"{first} has the following online course recorded: {online_course}.",
+        ]
+        parts.append(course_phrases[variant])
+
+    grades = payload.get('grades') or []
+    if grades:
+        grades_text = ', '.join(f"{grade['subject']} ({grade['grade']})" for grade in grades)
+        parts.append(f"Recorded grades include {grades_text}.")
+
+    attendance_records = payload.get('attendance_records') or []
+    low_subjects = payload.get('low_subjects') or []
+    if low_subjects:
+        low_text = ', '.join(
+            f"{record['subject']} ({float(record['percent']):g}%)"
+            for record in low_subjects
+        )
+        good_records = [
+            record for record in attendance_records
+            if float(record['percent']) >= 80
+        ]
+        attendance_sentence = f"Attendance is below 80% in {low_text}."
+        if good_records:
+            good_text = ', '.join(
+                f"{record['subject']} ({float(record['percent']):g}%)"
+                for record in good_records
+            )
+            attendance_sentence += f" Recorded attendance in {good_text} is at least 80%."
+        parts.append(attendance_sentence)
+    elif attendance_records:
+        attendance_text = ', '.join(
+            f"{record['subject']} ({float(record['percent']):g}%)"
+            for record in attendance_records
+        )
+        parts.append(f"Recorded attendance is {attendance_text}.")
+
+    advisory = (payload.get('faculty_advisory') or '').strip()
+    if advisory:
+        punctuation = '' if advisory.endswith(('.', '!', '?')) else '.'
+        parts.append(f"Faculty guidance: {advisory}{punctuation}")
+
+    observation = (payload.get('faculty_observation') or '').strip()
+    if observation:
+        punctuation = '' if observation.endswith(('.', '!', '?')) else '.'
+        parts.append(f"Mentor observation: {observation}{punctuation}")
+
+    skill_suggestion = (payload.get('skill_suggestion') or '').strip()
+    if skill_suggestion:
+        parts.append(skill_suggestion)
+
+    if len(parts) == 2:
+        parts.append("No additional student-specific details were available for this comment.")
+
+    parts.append(f"We look forward to supporting {name}'s continued academic progress.")
+    parts.append(_parent_cooperation_note(payload))
+    return ' '.join(part for part in parts if part).strip()
 
 
 def _parent_cooperation_note(payload):
@@ -1461,7 +1403,12 @@ def _validate_ai_comment(comment, payload):
         percent = subject.get('percent', -1)
         if name and name.lower() not in comment.lower():
             raise ValueError(f"Comment missing subject: {name}")
-        if percent >= 0 and str(int(percent)) not in comment:
+        percent_text = f"{float(percent):g}" if percent >= 0 else ''
+        if percent_text and not re.search(
+            rf"(?<![\d.]){re.escape(percent_text)}\s*(?:%|percent)(?![A-Za-z])",
+            comment,
+            flags=re.IGNORECASE,
+        ):
             raise ValueError(f"Comment missing percentage for: {name}")
     skill_suggestion = (payload.get('skill_suggestion') or '').strip()
     if skill_suggestion and skill_suggestion.lower() not in comment.lower():
@@ -1471,6 +1418,31 @@ def _validate_ai_comment(comment, payload):
 def _is_rate_limit_error(error):
     message = str(error).lower()
     return '429' in message or 'quota' in message or 'rate limit' in message
+
+
+def _ai_failure_message(error):
+    """Return a user-safe reason for using the template fallback."""
+    provider = PROVIDER.title()
+    status_code = getattr(error, 'status_code', None)
+    error_name = type(error).__name__.lower()
+
+    if _is_rate_limit_error(error) or status_code == 429:
+        return f"{provider} rate limit or quota reached; template fallback used."
+    if status_code in (401, 403):
+        return f"{provider} rejected the API credentials (HTTP {status_code}); template fallback used."
+    if status_code == 404:
+        return f"{provider} could not find the configured model (HTTP 404); check the model setting."
+    if status_code == 400:
+        return f"{provider} rejected the request (HTTP 400); check model/request settings and server logs."
+    if isinstance(status_code, int) and status_code >= 500:
+        return f"{provider} returned a service error (HTTP {status_code}); template fallback used."
+    if 'timeout' in error_name or isinstance(error, TimeoutError):
+        return f"{provider} request timed out after {AI_REQUEST_TIMEOUT_SECONDS} seconds; template fallback used."
+    if isinstance(error, ValueError):
+        return f"AI response did not meet report requirements ({error}); template fallback used."
+    if 'connection' in error_name:
+        return f"Could not connect to {provider}; check network access and server logs."
+    return f"{provider} request failed ({type(error).__name__}); template fallback used. Check server logs."
 
 
 def _fallback_result_for_student(student, show_grades, faculty_context, skill_suggestion, error):
@@ -1505,8 +1477,7 @@ def _fallback_result_for_student(student, show_grades, faculty_context, skill_su
         introduction = f"It is a pleasure to share the progress of {name}"
         if reg_no:
             introduction += f" (Reg. No. {reg_no})"
-        comment = f"Dear Parent, {introduction}. {name} is encouraged to continue developing useful engineering skills. "
-        comment += (payload.get('skill_suggestion') or '').strip()
+        comment = f"Dear Parent, {introduction}."
         if payload.get('low_subjects'):
             comment += f" {_parent_cooperation_note(payload)}"
         comment = comment.strip()
@@ -1543,15 +1514,11 @@ def _generate_for_one(student, show_grades=False, faculty_context=None, skill_su
             ai_generated = bool(comment)
         except Exception as error:
             print(f"[AI Report] Generation failed for {student.reg_num}: {error}")
-            if _is_rate_limit_error(error):
-                ai_warning = f"{PROVIDER.title()}'s request limit was reached; a template comment was used."
-            else:
-                ai_warning = (
-                    f"AI generation failed or exceeded the {AI_REQUEST_TIMEOUT_SECONDS}-second limit; "
-                    "a template comment was used."
-                )
+            ai_warning = _ai_failure_message(error)
     else:
-        ai_warning = f"{PROVIDER} is unavailable. Check the configured API key and server dependencies."
+        ai_warning = AI_PROVIDER_ERROR or (
+            f"{PROVIDER.title()} is unavailable; a template comment was used."
+        )
 
     if not comment:
         if not ai_warning:
@@ -1620,7 +1587,7 @@ def generate_comment_report():
                 s,
                 show_grades,
                 faculty_context,
-                skill_suggestions[s.reg_num],
+                skill_suggestions.get(s.reg_num, ''),
             ): s
             for s in students
         }
