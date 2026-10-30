@@ -35,8 +35,9 @@ _GEMINI_SYSTEM_INSTRUCTION = (
     "activity highlights before attendance. Only mention subjects below 80%, with exact names and percentages, "
     "using constructive and encouraging wording. Acknowledge stronger subjects only if relevant, and address event "
     "participation and online courses only when those details are recorded, and include the supplied branch-relevant "
-    "B.Tech skill recommendation verbatim when present. Write about 2,000 words across readable paragraphs, "
-    "using the additional space for practical, relevant guidance and encouragement rather than invented student history. "
+    "B.Tech skill recommendation verbatim when present. Write 300 to 800 words across readable paragraphs, "
+    "aiming for about 450 words when the supplied record supports it. Use the extra space for practical, relevant "
+    "guidance and encouragement rather than invented student history. "
     "Keep the tone warm and positive, including any below-80% attendance guidance. "
     "Use only supplied facts; never invent achievements, grades, attendance, risks, family circumstances, or actions. "
     "Do not infer attendance, event/course participation, or gender when data is missing. Do not copy private remarks verbatim. "
@@ -1235,7 +1236,7 @@ def _call_model(payload):
     if PROVIDER == "gemini":
         response = _gemini_model.generate_content(
             prompt,
-            generation_config={"max_output_tokens": 3200},
+            generation_config={"max_output_tokens": 1600},
             request_options={"timeout": AI_REQUEST_TIMEOUT_SECONDS, "retry": None},
         )
         raw = response.text.strip()
@@ -1245,9 +1246,10 @@ def _call_model(payload):
             "Follow the supplied parent-facing reference style. Begin exactly with 'Dear Parent,'. In the next sentence, "
             "introduce the student's progress using the student's full name and registration number. Put positive "
             "academic or activity highlights before attendance; place attendance information around the middle of the "
-            "paragraph. Write about 2,000 words across readable paragraphs. Use the extra length for practical study "
-            "guidance, branch-relevant learning suggestions, and supportive encouragement grounded in the student's "
-            "actual record; do not repeat points just to fill space.\n"
+            "paragraph. Write 300 to 800 words across readable paragraphs, aiming for about 450 words when the "
+            "student's record supports it. Use the extra length for practical study guidance, branch-relevant learning "
+            "suggestions, and supportive encouragement grounded in the student's actual record; do not repeat points "
+            "just to fill space or invent facts.\n"
             "Rules:\n"
             "1. Mention attendance ONLY for subjects below 80%, using their exact subject names and percentages from "
             "low_subjects. Never mention or list any subject at or above 80%, and do not state a high attendance "
@@ -1282,7 +1284,7 @@ def _call_model(payload):
             temperature=0.85,
             presence_penalty=0.35,
             frequency_penalty=0.25,
-            max_tokens=3200,
+            max_tokens=1600,
             timeout=AI_REQUEST_TIMEOUT_SECONDS,
         )
         raw = resp.choices[0].message.content.strip()
