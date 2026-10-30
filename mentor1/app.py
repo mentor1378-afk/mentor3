@@ -31,14 +31,16 @@ AI_REQUEST_TIMEOUT_SECONDS = 20
 _GEMINI_SYSTEM_INSTRUCTION = (
     "You are a caring, professional college mentor writing an individualized student progress comment. "
     "Follow the supplied parent-facing reference style: begin exactly with 'Dear Parent,'. In the next sentence, "
-    "introduce the student's progress by name and registration number. Describe positive academic or activity "
-    "highlights before discussing attendance; place any low-attendance concern around the middle of the paragraph "
-    "with exact subject names and percentages. Acknowledge stronger subjects when relevant, address event "
+    "introduce the student's progress by name and registration number. Describe supported positive academic or "
+    "activity highlights before attendance. Only mention subjects below 80%, with exact names and percentages, "
+    "using constructive and encouraging wording. Acknowledge stronger subjects only if relevant, and address event "
     "participation and online courses only when those details are recorded, and include the supplied branch-relevant "
-    "B.Tech skill recommendation verbatim when present. "
-    "Use only supplied facts; never invent achievements, grades, risks, family circumstances, or actions. "
+    "B.Tech skill recommendation verbatim when present. Write about 2,000 words across readable paragraphs, "
+    "using the additional space for practical, relevant guidance and encouragement rather than invented student history. "
+    "Keep the tone warm and positive, including any below-80% attendance guidance. "
+    "Use only supplied facts; never invent achievements, grades, attendance, risks, family circumstances, or actions. "
     "Do not infer attendance, event/course participation, or gender when data is missing. Do not copy private remarks verbatim. "
-    "Write one natural paragraph without headings or bullets and return only a JSON object with "
+    "Write readable paragraphs without headings or bullets and return only a JSON object with "
     '"reg_no" and "comment" fields.'
 )
 
@@ -1155,7 +1157,6 @@ def _build_ai_payload(student, show_grades=False, faculty_context=None, skill_su
         attendance_records.append({'subject': subject_name, 'percent': att_pct})
 
     low_subjects = [record for record in attendance_records if record['percent'] < 80]
-    other_slots_good = any(record['percent'] >= 80 for record in attendance_records) and bool(low_subjects)
 
     faculty_context = faculty_context or {}
     global_advisory = (faculty_context.get('global_advisory') or '').strip()
@@ -1165,9 +1166,8 @@ def _build_ai_payload(student, show_grades=False, faculty_context=None, skill_su
         'reg_no': student.reg_num,
         'name': name,
         'gender': '',
-        'attendance_records': attendance_records,
+        'attendance_records': low_subjects,
         'low_subjects': low_subjects,
-        'other_slots_good': other_slots_good,
         'event': event,
         'online_course': online_course,
         'branch': (student.branch or '').strip(),
@@ -1229,23 +1229,27 @@ def _call_model(payload):
     if PROVIDER == "gemini":
         response = _gemini_model.generate_content(
             prompt,
+            generation_config={"max_output_tokens": 3200},
             request_options={"timeout": AI_REQUEST_TIMEOUT_SECONDS, "retry": None},
         )
         raw = response.text.strip()
     elif PROVIDER in {"openai", "groq"}:
         system_msg = (
-            "You are a college mentor personally writing a short comment about one student for the semester mentor report. "
+            "You are a college mentor writing an individualized parent-facing progress report for one student. "
             "Follow the supplied parent-facing reference style. Begin exactly with 'Dear Parent,'. In the next sentence, "
             "introduce the student's progress using the student's full name and registration number. Put positive "
             "academic or activity highlights before attendance; place attendance information around the middle of the "
-            "paragraph. Write one natural, personal paragraph of about 90 to 150 words.\n"
+            "paragraph. Write about 2,000 words across readable paragraphs. Use the extra length for practical study "
+            "guidance, branch-relevant learning suggestions, and supportive encouragement grounded in the student's "
+            "actual record; do not repeat points just to fill space.\n"
             "Rules:\n"
-            "1. Mention low attendance only for subjects below 80%, with exact subject names and percentages from "
-            "attendance_records. If multiple subjects are low, identify each. Do not claim detention risk or "
-            "consequences. A parent/guardian cooperation sentence will be added at the end when attendance is below "
-            "80%; do not add one yourself. If attendance_records is empty, do not make any attendance claim.\n"
-            "2. Include the student's name and registration number in the introduction. Never claim attendance is "
-            "consistent unless recorded percentages support that statement.\n"
+            "1. Mention attendance ONLY for subjects below 80%, using their exact subject names and percentages from "
+            "low_subjects. Never mention or list any subject at or above 80%, and do not state a high attendance "
+            "percentage. If there are no low_subjects, omit attendance entirely. When reporting a low value, use "
+            "supportive, forward-looking language, never blame or harsh/negative wording. A positive family-support "
+            "sentence will be added at the end; do not add one yourself.\n"
+            "2. Include the student's name and registration number in the introduction. Do not claim attendance is "
+            "consistent unless recorded facts support it.\n"
             "3. Mention event participation only when event details are supplied. Do not add a future event suggestion "
             "when the event field is blank.\n"
             "4. Mention an online course only when online_course is supplied. Do not say that a course is missing or "
@@ -1256,8 +1260,10 @@ def _call_model(payload):
             "not as a claim of enrollment. If no recommendation is supplied, do not invent one.\n"
             "7. Make each comment specific to that student's supplied attendance, remark, faculty advisory, event, "
             "course, and grades. Do not attribute one student's information to another.\n"
-            "8. After 'Dear Parent,' introduce the student's progress, then share recorded positive details, attendance "
-            "information if available, and relevant guidance in that order. Avoid generic praise unsupported by facts.\n"
+            "8. After 'Dear Parent,' introduce the student's progress, then share recorded positive details and, "
+            "only if needed, a constructive note on below-80% attendance. Keep the whole comment positive, warm, "
+            "respectful, and encouraging; do not invent praise unsupported by facts. Never mention an attendance "
+            "percentage at or above 80%.\n"
             "Output no headings, bullets, or quotation marks. Silently correct spelling and grammar.\n"
             "Return ONLY a JSON object: {\"reg_no\": \"...\", \"comment\": \"...\"}"
         )
@@ -1270,6 +1276,7 @@ def _call_model(payload):
             temperature=0.85,
             presence_penalty=0.35,
             frequency_penalty=0.25,
+            max_tokens=3200,
             timeout=AI_REQUEST_TIMEOUT_SECONDS,
         )
         raw = resp.choices[0].message.content.strip()
@@ -1322,31 +1329,16 @@ def fallback_comment(payload):
         grades_text = ', '.join(f"{grade['subject']} ({grade['grade']})" for grade in grades)
         parts.append(f"Recorded grades include {grades_text}.")
 
-    attendance_records = payload.get('attendance_records') or []
     low_subjects = payload.get('low_subjects') or []
     if low_subjects:
         low_text = ', '.join(
             f"{record['subject']} ({float(record['percent']):g}%)"
             for record in low_subjects
         )
-        good_records = [
-            record for record in attendance_records
-            if float(record['percent']) >= 80
-        ]
-        attendance_sentence = f"Attendance is below 80% in {low_text}."
-        if good_records:
-            good_text = ', '.join(
-                f"{record['subject']} ({float(record['percent']):g}%)"
-                for record in good_records
-            )
-            attendance_sentence += f" Recorded attendance in {good_text} is at least 80%."
-        parts.append(attendance_sentence)
-    elif attendance_records:
-        attendance_text = ', '.join(
-            f"{record['subject']} ({float(record['percent']):g}%)"
-            for record in attendance_records
+        parts.append(
+            f"With regular attendance in {low_text}, {first} can make the most of upcoming classes "
+            "and continue progressing."
         )
-        parts.append(f"Recorded attendance is {attendance_text}.")
 
     advisory = (payload.get('faculty_advisory') or '').strip()
     if advisory:
@@ -1375,14 +1367,14 @@ def _parent_cooperation_note(payload):
         return ''
     first = (payload.get('name') or 'The student').split()[0]
     return (
-        f"The cooperation of the parents/guardians is also requested to support {first} "
-        "in improving attendance."
+        f"The encouragement and cooperation of the parents/guardians will support {first} "
+        "in maintaining regular attendance and continuing this progress."
     )
 
 
 def _ensure_parent_cooperation_note(comment, payload):
     note = _parent_cooperation_note(payload)
-    if note and 'cooperation of the parents/guardians' not in comment.lower():
+    if note and 'encouragement and cooperation of the parents/guardians' not in comment.lower():
         return f"{comment.rstrip()} {note}"
     return comment
 
@@ -1413,6 +1405,18 @@ def _validate_ai_comment(comment, payload):
     skill_suggestion = (payload.get('skill_suggestion') or '').strip()
     if skill_suggestion and skill_suggestion.lower() not in comment.lower():
         raise ValueError("Comment omitted the assigned branch-specific skill recommendation.")
+    allowed_attendance_percentages = {
+        float(subject.get('percent', -1))
+        for subject in payload.get('low_subjects', [])
+    }
+    for match in re.finditer(
+        r'(?<![\d.])(\d+(?:\.\d+)?)\s*(?:%|percent)(?![A-Za-z])',
+        comment,
+        re.IGNORECASE,
+    ):
+        reported_percentage = float(match.group(1))
+        if not any(abs(reported_percentage - allowed) < 0.01 for allowed in allowed_attendance_percentages):
+            raise ValueError("The AI comment included an unsupported percentage.")
 
 
 def _is_rate_limit_error(error):
