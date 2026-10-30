@@ -10,7 +10,6 @@ import threading
 import urllib.request
 from contextlib import contextmanager
 from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
@@ -1685,32 +1684,24 @@ def generate_comment_report():
     skill_suggestions = _assign_skill_suggestions(students)
 
     results = []
-    # Keep provider requests sequential to avoid Groq token-rate bursts within a UI batch.
-    BATCH = 3
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        futures = {
-            executor.submit(
-                _generate_for_one,
-                s,
+    # Keep provider requests sequential in the request's app context.
+    for student in students:
+        try:
+            results.append(_generate_for_one(
+                student,
                 show_grades,
                 faculty_context,
-                skill_suggestions.get(s.reg_num, ''),
-            ): s
-            for s in students
-        }
-        for future in as_completed(futures):
-            try:
-                results.append(future.result())
-            except Exception as e:
-                s = futures[future]
-                print(f"[AI Report] Exception for {s.reg_num}: {e}")
-                results.append(_fallback_result_for_student(
-                    s,
-                    show_grades,
-                    faculty_context,
-                    skill_suggestions.get(s.reg_num, ''),
-                    "AI generation failed; a template comment was used. Check the server logs.",
-                ))
+                skill_suggestions.get(student.reg_num, ''),
+            ))
+        except Exception as error:
+            print(f"[AI Report] Exception for {student.reg_num}: {error}")
+            results.append(_fallback_result_for_student(
+                student,
+                show_grades,
+                faculty_context,
+                skill_suggestions.get(student.reg_num, ''),
+                "AI generation failed; a template comment was used. Check the server logs.",
+            ))
 
     # Sort by name for consistent ordering
     results.sort(key=lambda x: (x['name'] or '').lower())
