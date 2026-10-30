@@ -26,7 +26,7 @@ from pptx.oxml.xmlchemy import OxmlElement
 
 # --- Dynamic model selection -------------------------------------------------
 
-AI_REQUEST_TIMEOUT_SECONDS = 20
+AI_REQUEST_TIMEOUT_SECONDS = 12
 
 _GEMINI_SYSTEM_INSTRUCTION = (
     "You are a caring, professional college mentor writing an individualized student progress comment. "
@@ -1390,6 +1390,11 @@ def _ensure_parent_cooperation_note(comment, payload):
 def _validate_ai_comment(comment, payload):
     if not comment:
         raise ValueError("The AI provider returned an empty comment.")
+    word_count = len(comment.split())
+    if not 300 <= word_count <= 800:
+        raise ValueError(
+            f"The AI comment contained {word_count} words; expected between 300 and 800."
+        )
     if not comment.lstrip().lower().startswith("dear parent,"):
         raise ValueError("The AI comment did not use the required parent-facing opening.")
     name = (payload.get('name') or '').strip()
@@ -1522,6 +1527,7 @@ def _generate_for_one(student, show_grades=False, faculty_context=None, skill_su
     if AI_PROVIDER_AVAILABLE:
         try:
             comment = _call_model(payload)
+            comment = _ensure_parent_cooperation_note(comment, payload)
             _validate_ai_comment(comment, payload)
             ai_generated = bool(comment)
         except Exception as error:
