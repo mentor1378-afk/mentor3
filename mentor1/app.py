@@ -1182,8 +1182,7 @@ def _build_ai_payload(student, show_grades=False, faculty_context=None, skill_su
         'branch': (student.branch or '').strip(),
         'skill_suggestion': skill_suggestion,
         'student_remark': remark,
-        'faculty_advisory': individual_advisory,
-        'global_advisory': global_advisory,
+        'faculty_advisory': individual_advisory or global_advisory,
         'faculty_observation': (faculty_context.get('global_observation') or '').strip(),
         'institution': 'SIMATS Engineering',
     }
@@ -1217,14 +1216,9 @@ def _call_model(payload):
     advisory = (payload.get('faculty_advisory') or '').strip()
     if advisory:
         extra_parts.append(
-            f"Use this individual advice where relevant: '{advisory}'. "
-            "Weave it naturally into the mentor's own voice; never label it as faculty guidance."
-        )
-    global_advisory = (payload.get('global_advisory') or '').strip()
-    if global_advisory:
-        extra_parts.append(
-            f"Consider this faculty-wide message only if it is relevant to this student's report: "
-            f"'{global_advisory}'. Rephrase it naturally in the mentor's voice; never label it as faculty guidance."
+            f"Include the meaning of this advisory in the comment: '{advisory}'. "
+            "Rephrase it naturally in the mentor's own voice, correcting spelling and grammar as needed. "
+            "Do not omit it or label it as faculty guidance."
         )
     skill_suggestion = (payload.get('skill_suggestion') or '').strip()
     if skill_suggestion:
