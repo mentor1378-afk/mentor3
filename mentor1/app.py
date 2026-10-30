@@ -39,13 +39,9 @@ _GEMINI_SYSTEM_INSTRUCTION = (
     "B.Tech skill recommendation verbatim when present. Write 300 to 800 words across readable paragraphs, "
     "aiming for about 450 words when the supplied record supports it. Use the extra space for practical, relevant "
     "guidance and encouragement rather than invented student history. "
-    "Include a brief, positive classroom-engagement encouragement for every student, phrased as helpful habits "
-    "to practise rather than claims about observed behavior. "
     "Write in the mentor's own warm, professional voice; never identify text as 'faculty guidance' or "
     "'mentor observation'. Keep the tone positive, including any below-80% attendance guidance. "
-    "Use only supplied facts. Do not present classroom behavior, academic strengths, achievements, personal traits, "
-    "or family circumstances as observed unless explicitly recorded. Phrase general study advice as suggestions, not "
-    "as things the student already does. Never invent grades, attendance, risks, or actions. "
+    "Use only supplied facts; never invent achievements, grades, attendance, risks, family circumstances, or actions. "
     "Do not infer attendance, event/course participation, or gender when data is missing. Do not copy private remarks verbatim. "
     "Write readable paragraphs without headings or bullets and return only a JSON object with "
     '"reg_no" and "comment" fields.'
@@ -1255,8 +1251,8 @@ def _call_model(payload):
             "academic or activity highlights before attendance; place attendance information around the middle of the "
             "paragraph. Write 300 to 800 words across readable paragraphs, aiming for about 450 words when the "
             "student's record supports it. Use the extra length for practical study guidance, branch-relevant learning "
-            "suggestions, and supportive encouragement grounded in the student's actual record. Aim for about 450 "
-            "words while staying within 300 to 800 words; do not repeat points just to fill space or invent facts.\n"
+            "suggestions, and supportive encouragement grounded in the student's actual record; do not repeat points "
+            "just to fill space or invent facts.\n"
             "Rules:\n"
             "1. Mention attendance ONLY for subjects below 80%, using their exact subject names and percentages from "
             "low_subjects. Never mention or list any subject at or above 80%, and do not state a high attendance "
@@ -1269,12 +1265,8 @@ def _call_model(payload):
             "when the event field is blank.\n"
             "4. Mention an online course only when online_course is supplied. Do not say that a course is missing or "
             "invent course participation when the field is blank.\n"
-            "5. Weave provided grades naturally. Use only supplied facts; do not invent classroom behavior, "
-            "academic strengths, achievements, subjects, percentages, course enrollment, gender, or personal "
-            "circumstances. Include a brief, positive classroom-engagement encouragement for every student, "
-            "phrased as helpful habits to practise rather than claims about observed behavior. "
-            "Phrase general study advice as suggestions, not claims about what the student already does. "
-            "Do not repeat private remarks verbatim.\n"
+            "5. Weave provided grades naturally. Use only supplied facts; do not invent subjects, percentages, "
+            "achievements, course enrollment, gender, or personal circumstances. Do not repeat private remarks verbatim.\n"
             "6. Include the provided branch-relevant B.Tech skill/course recommendation verbatim as a suggestion, "
             "not as a claim of enrollment. If no recommendation is supplied, do not invent one.\n"
             "7. Make each comment specific to that student's supplied attendance, remark, faculty advisory, event, "
@@ -1395,11 +1387,6 @@ def fallback_comment(payload):
     if skill_suggestion:
         parts.append(skill_suggestion)
 
-    parts.append(
-        f"A positive classroom routine can support {first}'s learning: listening attentively, "
-        "participating respectfully, and asking questions whenever a topic needs clarification."
-    )
-
     if len(parts) == 2:
         parts.append("No additional student-specific details were available for this comment.")
 
@@ -1425,56 +1412,6 @@ def _ensure_parent_cooperation_note(comment, payload):
     return comment
 
 
-def _ensure_classroom_engagement_note(comment, payload):
-    name_parts = (payload.get('name') or 'The student').strip().split()
-    first = name_parts[0] if name_parts else 'The student'
-    if 'a positive classroom routine can support' in comment.casefold():
-        return comment
-    note = (
-        f"A positive classroom routine can support {first}'s learning: listening attentively, "
-        "participating respectfully, and asking questions whenever a topic needs clarification."
-    )
-    return f"{comment.rstrip()} {note}"
-
-
-def _ensure_required_ai_details(comment, payload):
-    """Add supplied attendance and skill details omitted by the model."""
-    normalized_comment = re.sub(r'[\W_]+', '', comment, flags=re.UNICODE).casefold()
-    missing_details = []
-
-    for subject in payload.get('low_subjects', []):
-        subject_name = (subject.get('subject') or '').strip()
-        if not subject_name:
-            continue
-        percent = float(subject.get('percent', -1))
-        percent_text = f"{percent:g}" if percent >= 0 else ''
-        normalized_subject = re.sub(r'[\W_]+', '', subject_name, flags=re.UNICODE).casefold()
-        percent_pattern = (
-            rf"(?<![\d.]){re.escape(percent_text)}\s*(?:%|percent)(?![A-Za-z])"
-            if percent_text else None
-        )
-        has_subject = normalized_subject in normalized_comment
-        has_percent = (
-            percent_pattern is not None
-            and re.search(percent_pattern, comment, flags=re.IGNORECASE) is not None
-        )
-        if not has_subject or not has_percent:
-            if percent_text:
-                missing_details.append(
-                    f"The recorded attendance for {subject_name} is {percent_text}%."
-                )
-            else:
-                missing_details.append(f"The recorded subject is {subject_name}.")
-
-    skill_suggestion = (payload.get('skill_suggestion') or '').strip()
-    if skill_suggestion and skill_suggestion.casefold() not in comment.casefold():
-        missing_details.append(skill_suggestion)
-
-    if missing_details:
-        return f"{comment.rstrip()} {' '.join(missing_details)}"
-    return comment
-
-
 def _validate_ai_comment(comment, payload):
     if not comment:
         raise ValueError("The AI provider returned an empty comment.")
@@ -1485,31 +1422,16 @@ def _validate_ai_comment(comment, payload):
         )
     if not comment.lstrip().lower().startswith("dear parent,"):
         raise ValueError("The AI comment did not use the required parent-facing opening.")
+    name = (payload.get('name') or '').strip()
+    if name and name.lower() not in comment.lower():
+        raise ValueError("The AI comment did not identify the student.")
     reg_no = (payload.get('reg_no') or '').strip()
     if reg_no and reg_no.lower() not in comment.lower():
         raise ValueError("The AI comment did not include the registration number.")
-    name = (payload.get('name') or '').strip()
-    if name:
-        normalized_name = re.sub(r'[\W_]+', '', name, flags=re.UNICODE).casefold()
-        normalized_comment = re.sub(r'[\W_]+', '', comment, flags=re.UNICODE).casefold()
-        name_parts = re.findall(r'[^\W_]+', name, flags=re.UNICODE)
-        first_name = name_parts[0] if name_parts else ''
-        first_name_pattern = (
-            rf'(?<!\w){re.escape(first_name)}(?!\w)' if first_name else None
-        )
-        has_name = normalized_name in normalized_comment or (
-            bool(reg_no)
-            and first_name_pattern is not None
-            and re.search(first_name_pattern, comment, flags=re.IGNORECASE) is not None
-        )
-        if not has_name:
-            raise ValueError("The AI comment did not identify the student.")
     for subject in payload.get('low_subjects', []):
         name = subject.get('subject', '')
         percent = subject.get('percent', -1)
-        normalized_subject = re.sub(r'[\W_]+', '', name, flags=re.UNICODE).casefold()
-        normalized_comment = re.sub(r'[\W_]+', '', comment, flags=re.UNICODE).casefold()
-        if normalized_subject and normalized_subject not in normalized_comment:
+        if name and name.lower() not in comment.lower():
             raise ValueError(f"Comment missing subject: {name}")
         percent_text = f"{float(percent):g}" if percent >= 0 else ''
         if percent_text and not re.search(
@@ -1619,7 +1541,6 @@ def _fallback_result_for_student(student, show_grades, faculty_context, skill_su
         comment = f"Dear Parent, {introduction}."
         if payload.get('low_subjects'):
             comment += f" {_parent_cooperation_note(payload)}"
-        comment = _ensure_classroom_engagement_note(comment, payload)
         comment = comment.strip()
 
     return {
@@ -1650,15 +1571,12 @@ def _generate_for_one(student, show_grades=False, faculty_context=None, skill_su
     if AI_PROVIDER_AVAILABLE:
         try:
             comment = _call_model(payload)
-            comment = _ensure_required_ai_details(comment, payload)
-            comment = _ensure_classroom_engagement_note(comment, payload)
             comment = _ensure_parent_cooperation_note(comment, payload)
             _validate_ai_comment(comment, payload)
             ai_generated = bool(comment)
         except Exception as error:
             print(f"[AI Report] Generation failed for {student.reg_num}: {error}")
             ai_warning = _ai_failure_message(error)
-            comment = None
     else:
         ai_warning = AI_PROVIDER_ERROR or (
             f"{PROVIDER.title()} is unavailable; a template comment was used."
