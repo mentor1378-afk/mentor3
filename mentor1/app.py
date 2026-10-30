@@ -6,7 +6,9 @@ import json
 import re
 import io
 import time
+import threading
 import urllib.request
+from contextlib import contextmanager
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify
@@ -28,6 +30,8 @@ from pptx.oxml.xmlchemy import OxmlElement
 # --- Dynamic model selection -------------------------------------------------
 
 AI_REQUEST_TIMEOUT_SECONDS = 20
+_AI_PROVIDER_LOCK = threading.Lock()
+_AI_PROVIDER_ADVISORY_LOCK_ID = 5178943201943
 
 _GEMINI_SYSTEM_INSTRUCTION = (
     "You are a caring, professional college mentor writing an individualized student progress comment. "
@@ -1332,6 +1336,42 @@ def _call_model(payload):
         return raw
 
 
+@contextmanager
+def _ai_provider_lock():
+    """Serialize AI calls across threads and PostgreSQL-backed app workers."""
+    with _AI_PROVIDER_LOCK:
+        if db.engine.dialect.name != 'postgresql':
+            yield
+            return
+
+        connection = db.engine.connect()
+        lock_acquired = False
+        try:
+            connection.exec_driver_sql(
+                f"SELECT pg_advisory_lock({_AI_PROVIDER_ADVISORY_LOCK_ID})"
+            )
+            lock_acquired = True
+            try:
+                yield
+            finally:
+                if lock_acquired:
+                    try:
+                        connection.exec_driver_sql(
+                            f"SELECT pg_advisory_unlock({_AI_PROVIDER_ADVISORY_LOCK_ID})"
+                        )
+                    except Exception:
+                        connection.invalidate()
+                        raise
+        finally:
+            connection.close()
+
+
+def _call_model_with_provider_lock(payload):
+    """Prevent concurrent report requests from bursting the shared provider quota."""
+    with _ai_provider_lock():
+        return _call_model(payload)
+
+
 def fallback_comment(payload):
     """Create a deterministic comment using recorded facts, without filling data gaps."""
     name = (payload.get('name') or 'The student').strip()
@@ -1469,16 +1509,22 @@ def _rate_limit_retry_delay(error):
 
     response = getattr(error, 'response', None)
     headers = getattr(response, 'headers', {}) or {}
-    delays = []
-    for header in ('retry-after', 'x-ratelimit-reset-requests', 'x-ratelimit-reset-tokens'):
+    for header in ('retry-after', 'x-ratelimit-reset-tokens', 'x-ratelimit-reset-requests'):
         value = headers.get(header)
         if value is None:
             continue
-        match = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?\s*', str(value), re.IGNORECASE)
-        if match:
-            delays.append(float(match.group(1)))
+        value = str(value).strip().lower()
+        if re.fullmatch(r'\d+(?:\.\d+)?', value):
+            return float(value)
 
-    return max(delays) if delays else 1.0
+        duration_parts = re.findall(r'(\d+(?:\.\d+)?)\s*(h|m|s)', value)
+        if duration_parts and ''.join(
+            f"{amount}{unit}" for amount, unit in duration_parts
+        ) == re.sub(r'\s+', '', value):
+            unit_seconds = {'h': 3600, 'm': 60, 's': 1}
+            return sum(float(amount) * unit_seconds[unit] for amount, unit in duration_parts)
+
+    return 1.0
 
 
 def _ai_failure_message(error):
@@ -1570,7 +1616,7 @@ def _generate_for_one(student, show_grades=False, faculty_context=None, skill_su
     ai_warning = None
     if AI_PROVIDER_AVAILABLE:
         try:
-            comment = _call_model(payload)
+            comment = _call_model_with_provider_lock(payload)
             comment = _ensure_parent_cooperation_note(comment, payload)
             _validate_ai_comment(comment, payload)
             ai_generated = bool(comment)
@@ -1639,10 +1685,9 @@ def generate_comment_report():
     skill_suggestions = _assign_skill_suggestions(students)
 
     results = []
-    # Process each UI batch concurrently so provider timeouts fit within one batch wait.
+    # Keep provider requests sequential to avoid Groq token-rate bursts within a UI batch.
     BATCH = 3
-    max_workers = min(BATCH, len(students))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         futures = {
             executor.submit(
                 _generate_for_one,
