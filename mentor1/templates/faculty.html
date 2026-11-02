@@ -538,7 +538,7 @@
                             class="inline-block w-12 h-12 rounded-full border-4 border-violet-500/30 border-t-violet-400 animate-spin mb-4">
                         </div>
                         <p class="text-white font-bold text-lg" id="ai-loading-text">Generating comments with AI...</p>
-                        <p class="text-gray-500 text-sm mt-1">Comments appear in batches of 3 for easier review</p>
+                        <p class="text-gray-500 text-sm mt-1">Generate up to 3 comments at a time; choose when to continue.</p>
                         <div class="max-w-md mx-auto mt-5">
                             <div class="h-2 rounded-full bg-white/10 overflow-hidden">
                                 <div id="ai-progress-fill" class="ai-batch-progress-fill h-full w-0 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-400"></div>
@@ -568,6 +568,13 @@
 
                     <!-- Student cards -->
                     <div id="ai-cards-container" class="space-y-4"></div>
+                    <div id="ai-next-batch-container" class="hidden mt-6 text-center">
+                        <button id="ai-next-batch-btn" type="button" onclick="generateNextCommentBatch()"
+                            class="btn-primary !py-3 !px-8 inline-flex items-center gap-2 rounded-xl !bg-violet-600 hover:!bg-violet-500">
+                            <i data-lucide="sparkles" class="w-4 h-4"></i>
+                            <span id="ai-next-batch-label">Generate next students</span>
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -618,6 +625,10 @@
 
         // Holds the currently generated results
         let _aiResults = [];
+        let _aiReportRegNos = [];
+        let _aiNextRegNoIndex = 0;
+        let _aiBatchInProgress = false;
+        const AI_REPORT_BATCH_SIZE = 3;
 
         function renderAiSummary(results) {
             const lowCount = results.filter(r => r.low_count > 0).length;
@@ -635,11 +646,13 @@
             document.getElementById('ai-loading').classList.add('hidden');
             document.getElementById('ai-error').classList.add('hidden');
             document.getElementById('ai-generate-btn').disabled = false;
+            document.getElementById('ai-next-batch-btn').disabled = false;
 
             if (state === 'loading') {
                 document.getElementById('ai-loading').classList.remove('hidden');
                 document.getElementById('ai-loading-text').textContent = msg || 'Generating comments with AI...';
                 document.getElementById('ai-generate-btn').disabled = true;
+                document.getElementById('ai-next-batch-btn').disabled = true;
             } else if (state === 'preview') {
                 document.getElementById('ai-preview-area').classList.remove('hidden');
             } else if (state === 'error') {
@@ -776,62 +789,80 @@
         }
 
         async function generateCommentReport() {
-            const batchSize = 3;
             const regNos = studentsData.map(student => student.reg_num).filter(Boolean);
             if (!regNos.length) {
                 setAiUiState('error', 'No students are available for comment generation.');
                 return;
             }
 
-            const total = regNos.length;
+            _aiReportRegNos = regNos;
+            _aiNextRegNoIndex = 0;
             const container = document.getElementById('ai-cards-container');
             container.innerHTML = '';
             _aiResults = [];
+            document.getElementById('ai-next-batch-container').classList.add('hidden');
             renderAiSummary([]);
-            setAiUiState('loading', `Preparing the first ${Math.min(batchSize, total)} students...`);
+            document.getElementById('ai-preview-area').classList.remove('hidden');
+            document.getElementById('ai-progress-fill').style.width = '0%';
+            document.getElementById('ai-progress-text').textContent = `0 of ${regNos.length} ready`;
+            await generateNextCommentBatch();
+        }
 
-            const preview = document.getElementById('ai-preview-area');
-            const progressFill = document.getElementById('ai-progress-fill');
-            const progressText = document.getElementById('ai-progress-text');
-            preview.classList.remove('hidden');
-            progressFill.style.width = '0%';
-            progressText.textContent = `0 of ${total} ready`;
+        async function generateNextCommentBatch() {
+            if (_aiBatchInProgress || _aiNextRegNoIndex >= _aiReportRegNos.length) return;
+
+            const start = _aiNextRegNoIndex;
+            const batch = _aiReportRegNos.slice(start, start + AI_REPORT_BATCH_SIZE);
+            const batchNumber = Math.floor(start / AI_REPORT_BATCH_SIZE) + 1;
+            _aiBatchInProgress = true;
+            setAiUiState('loading',
+                `Analyzing batch ${batchNumber}: ${batch.length} student${batch.length === 1 ? '' : 's'}...`);
 
             try {
-                for (let start = 0; start < total; start += batchSize) {
-                    const batch = regNos.slice(start, start + batchSize);
-                    const batchNumber = Math.floor(start / batchSize) + 1;
-                    document.getElementById('ai-loading-text').textContent =
-                        `Analyzing batch ${batchNumber}: ${batch.length} student${batch.length === 1 ? '' : 's'}...`;
-
-                    const res = await fetch('/generate_comment_report', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ reg_nos: batch })
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        throw new Error(err.error || `Server error ${res.status}`);
-                    }
-
-                    const results = await res.json();
-                    renderCards(results, true);
-                    const completed = _aiResults.length;
-                    progressFill.style.width = `${Math.round(completed / total * 100)}%`;
-                    progressText.textContent = `${completed} of ${total} ready`;
-                    document.getElementById('ai-loading-text').textContent =
-                        `${completed} of ${total} comments ready`;
-
-                    if (start + batchSize < total) {
-                        await new Promise(resolve => setTimeout(resolve, 2200));
-                    }
+                const res = await fetch('/generate_comment_report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reg_nos: batch })
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || `Server error ${res.status}`);
                 }
 
+                const results = await res.json();
+                if (!Array.isArray(results) || results.length !== batch.length) {
+                    throw new Error('The server did not return a comment for every student in this group.');
+                }
+
+                renderCards(results, true);
+                _aiNextRegNoIndex += batch.length;
+                const total = _aiReportRegNos.length;
+                const completed = _aiNextRegNoIndex;
+                document.getElementById('ai-progress-fill').style.width =
+                    `${Math.round(completed / total * 100)}%`;
+                document.getElementById('ai-progress-text').textContent = `${completed} of ${total} ready`;
+
+                const remaining = total - completed;
+                const nextBatchContainer = document.getElementById('ai-next-batch-container');
+                if (remaining > 0) {
+                    document.getElementById('ai-next-batch-label').textContent =
+                        `Generate next ${Math.min(AI_REPORT_BATCH_SIZE, remaining)} student${remaining === 1 ? '' : 's'}`;
+                    nextBatchContainer.classList.remove('hidden');
+                    lucide.createIcons();
+                } else {
+                    nextBatchContainer.classList.add('hidden');
+                }
                 setAiUiState('preview');
-                progressFill.style.width = '100%';
-                progressText.textContent = `${total} of ${total} ready`;
-            } catch (e) {
-                setAiUiState('error', 'The batch could not continue: ' + e.message);
+            } catch (error) {
+                const nextBatchContainer = document.getElementById('ai-next-batch-container');
+                document.getElementById('ai-next-batch-label').textContent =
+                    `Retry group ${batchNumber}`;
+                nextBatchContainer.classList.remove('hidden');
+                lucide.createIcons();
+                setAiUiState('error', `Could not generate this group: ${error.message}`);
+            } finally {
+                _aiBatchInProgress = false;
+                document.getElementById('ai-next-batch-btn').disabled = false;
             }
         }
 
